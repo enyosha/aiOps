@@ -1,0 +1,21 @@
+{
+  "mcpServers": {
+    "amap-maps-streamableHTTP": {
+      "url": "https://mcp.amap.com/mcp?key={AMAP_API_KEY}"
+    },
+    "calculator": {
+      "command": "python",
+      "args": [
+        "../Server/calculator_server.py"
+      ],
+      "transport": "stdio"
+    },
+    "log-reader": {
+      "command": "python",
+      "args": [
+        "../Server/logReader_server.py"
+      ],
+      "transport": "stdio"
+    }
+  }
+}
