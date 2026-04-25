@@ -27,7 +27,8 @@ async def main():
         "今天北京的天气怎么样？",
         # "从上海到杭州的最佳路线是什么？",
         # "分析一下 error.log 文件中有什么错误信息"
-        "日志信息里面 DEBUG 级别的日志有哪些？列举出三个出来"
+        "日志信息里面 DEBUG 级别的日志有哪些？列举出三个出来",
+        "大聪明口服液多少钱?"
     ]
     
     for i, test_input in enumerate(test_inputs, 1):

@@ -15,6 +15,7 @@ from langgraph.graph import StateGraph, START, END
 from Routing.calculator import create_calculator_agent
 from Routing.log_reader import create_log_reader_agent
 from Routing.amap import create_amap_agent
+from Routing.rag_agent import create_rag_agent
 
 # 加载环境变量
 from dotenv import load_dotenv
@@ -27,7 +28,7 @@ DASHSCOPE_API_KEY = os.getenv("DASHSCOPE_API_KEY")
 from pydantic import BaseModel, Field
 
 class Route(BaseModel):
-    step: Literal["calculator", "log_reader", "amap"] = Field(
+    step: Literal["calculator", "log_reader", "amap", "rag_query"] = Field(
         description="The next step in the routing process"
     )
 
@@ -42,7 +43,7 @@ class State(TypedDict):
 # 节点函数
 async def handle_calculator_request(state: State):
     """处理计算器请求"""
-    print("🔢 路由到计算器代理")
+    print("路由到计算器代理")
     agent = await create_calculator_agent()
     result = await agent.ainvoke(state["input"])
     output = result.get("response", {}).get("content", "") if result.get("status") == "success" else result.get("error", "")
@@ -51,7 +52,7 @@ async def handle_calculator_request(state: State):
 
 async def handle_log_reader_request(state: State):
     """处理日志读取请求"""
-    print("📊 路由到日志读取代理")
+    print("路由到日志读取代理")
     agent = await create_log_reader_agent()
     result = await agent.ainvoke(state["input"])
     output = result.get("response", {}).get("content", "") if result.get("status") == "success" else result.get("error", "")
@@ -60,8 +61,17 @@ async def handle_log_reader_request(state: State):
 
 async def handle_amap_request(state: State):
     """处理高德地图请求"""
-    print("🗺️ 路由到高德地图代理")
+    print("路由到高德地图代理")
     agent = await create_amap_agent()
+    result = await agent.ainvoke(state["input"])
+    output = result.get("response", {}).get("content", "") if result.get("status") == "success" else result.get("error", "")
+    return {"output": output}
+
+
+async def handle_rag_request(state: State):
+    """处理RAG知识库查询请求"""
+    print("路由到RAG知识库代理")
+    agent = await create_rag_agent()
     result = await agent.ainvoke(state["input"])
     output = result.get("response", {}).get("content", "") if result.get("status") == "success" else result.get("error", "")
     return {"output": output}
@@ -89,6 +99,7 @@ async def route_request(state: State):
 - "calculator": 数学计算问题
 - "log_reader": 日志读取或分析问题
 - "amap": 地图、位置、导航或天气等问题
+- "rag_query": 关于AI趋势、医学知识、产品介绍等知识库内容的问题
 
 不要返回其他任何内容，只需要上述格式的JSON。"""
         ),
@@ -118,6 +129,8 @@ async def route_request(state: State):
                 decision = "log_reader"
             elif "amap" in response_text.lower():
                 decision = "amap"
+            elif "rag_query" in response_text.lower():
+                decision = "rag_query"
             else:
                 decision = "unknown"
     except json.JSONDecodeError:
@@ -129,6 +142,8 @@ async def route_request(state: State):
             decision = "log_reader"
         elif "amap" in response_text:
             decision = "amap"
+        elif "rag_query" in response_text:
+            decision = "rag_query"
         else:
             decision = "unknown"
     
@@ -150,6 +165,8 @@ def route_decision(state: State):
         return "handle_log_reader_request"
     elif state["decision"] == "amap":
         return "handle_amap_request"
+    elif state["decision"] == "rag_query":
+        return "handle_rag_request"
     else:
         # 如果无法识别意图，返回错误节点
         return "error_handler"
@@ -164,6 +181,7 @@ def build_router_workflow():
     builder.add_node("handle_calculator_request", handle_calculator_request)
     builder.add_node("handle_log_reader_request", handle_log_reader_request)
     builder.add_node("handle_amap_request", handle_amap_request)
+    builder.add_node("handle_rag_request", handle_rag_request)
     builder.add_node("route_request", route_request)
     builder.add_node("error_handler", error_handler)
 
@@ -176,12 +194,14 @@ def build_router_workflow():
             "handle_calculator_request": "handle_calculator_request",
             "handle_log_reader_request": "handle_log_reader_request",
             "handle_amap_request": "handle_amap_request",
+            "handle_rag_request": "handle_rag_request",
             "error_handler": "error_handler"
         },
     )
     builder.add_edge("handle_calculator_request", END)
     builder.add_edge("handle_log_reader_request", END)
     builder.add_edge("handle_amap_request", END)
+    builder.add_edge("handle_rag_request", END)
     builder.add_edge("error_handler", END)
 
     # 编译工作流
@@ -201,6 +221,8 @@ async def main():
     # 测试用例
     test_inputs = [
         "计算 25 * 17 + 45 / 3 的结果",
+        "2025年人工智能有哪些发展趋势?",
+        "大聪明牌口服液的功效是什么?",
         # "帮我读取一下 application.log 文件的最后 10 行",
         # "今天北京的天气怎么样？",
         # "从上海到杭州的最佳路线是什么？",
@@ -208,15 +230,15 @@ async def main():
     ]
     
     for i, test_input in enumerate(test_inputs, 1):
-        print(f"\n📝 测试 {i}: {test_input}")
+        print(f"\n测试 {i}: {test_input}")
         print("-" * 50)
         
         try:
             # 调用工作流
             state = await router_workflow.ainvoke({"input": test_input})
-            print(f"🤖 回应：{state['output']}")
+            print(f"回应：{state['output']}")
         except Exception as e:
-            print(f"❌ 错误：{str(e)}")
+            print(f"错误：{str(e)}")
     
     print("\n" + "=" * 70)
 

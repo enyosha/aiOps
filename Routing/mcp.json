@@ -16,6 +16,13 @@
         "../Server/logReader_server.py"
       ],
       "transport": "stdio"
+    },
+    "rag-knowledge": {
+      "command": "python",
+      "args": [
+        "../Server/rag_server.py"
+      ],
+      "transport": "stdio"
     }
   }
 }

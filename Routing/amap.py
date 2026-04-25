@@ -59,16 +59,16 @@ class ToolsAndModel:
         config_path = os.path.join(os.path.dirname(__file__), "mcp.json")
         
         if not os.path.exists(config_path):
-            print(f"⚠️ 配置文件不存在: {config_path}")
+            print(f" 配置文件不存在: {config_path}")
             return {}
         
         try:
             with open(config_path, 'r', encoding='utf-8') as f:
                 config = json.load(f)
-                print("✅ 成功加载 Routing/mcp.json 配置文件")
+                print(" 成功加载 Routing/mcp.json 配置文件")
                 return config.get("mcpServers", {})
         except Exception as e:
-            print(f"❌ 加载配置文件失败: {e}")
+            print(f" 加载配置文件失败: {e}")
             return {}
     
     def get_llm(self):
@@ -114,7 +114,7 @@ class ModelNode:
         
         # 如果没有工具，返回错误信息
         if not tools:
-            print("⚠️ 无法加载高德地图工具，无法处理请求")
+            print(" 无法加载高德地图工具，无法处理请求")
             error_response = AIMessage(
                 content="抱歉，无法连接到高德地图服务，无法处理您的请求。",
                 tool_calls=[]
@@ -167,7 +167,7 @@ class ModelNode:
    - date: 出发日期（格式：2024-3-19），可选
    - time: 出发时间（格式：2024-3-19），可选
 
-5. ⚠️ **关键注意事项**：
+5.  **关键注意事项**：
    - 如果 API 返回的结果为空，说明没有匹配的路线或数据
    - 此时应该：
      a) 检查是否设置了 extensions='all'
@@ -261,10 +261,10 @@ class ModelNode:
                         if len(connection_tuple) >= 2:
                             read, write = connection_tuple[0], connection_tuple[1]
                         else:
-                            print("⚠️ 无法从连接中提取读写接口")
+                            print(" 无法从连接中提取读写接口")
                             return None
                     else:
-                        print("⚠️ 连接对象格式不符合预期")
+                        print(" 连接对象格式不符合预期")
                         return None
                 
                 async with ClientSession(read, write) as session:
@@ -293,7 +293,7 @@ class ModelNode:
                     amap_url = server_config["url"].replace("{AMAP_API_KEY}", AMAP_API_KEY)
                     
                     if not AMAP_API_KEY:
-                        print("⚠️ 高德 API 密钥未配置")
+                        print(" 高德 API 密钥未配置")
                         continue
                     
                     # 使用 Streamable HTTP 客户端连接高德 MCP 服务
@@ -314,17 +314,17 @@ class ModelNode:
                                 if len(connection_tuple) >= 2:
                                     read, write = connection_tuple[0], connection_tuple[1]
                                 else:
-                                    print("⚠️ 无法从连接中提取读写接口")
+                                    print(" 无法从连接中提取读写接口")
                                     continue
                             else:
-                                print("⚠️ 连接对象格式不符合预期")
+                                print(" 连接对象格式不符合预期")
                                 continue
                         
                         async with ClientSession(read, write) as session:
                             await session.initialize()
                             loaded_tools = await load_mcp_tools(session)
                             tools.extend(loaded_tools)
-                            print(f"✅ 从 {server_name} 高德服务器加载了 {len(loaded_tools)} 个工具")
+                            print(f" 从 {server_name} 高德服务器加载了 {len(loaded_tools)} 个工具")
                 elif server_config.get("transport") == "streamable-http":
                     # 本地服务器配置 - 修正路径
                     script_path = os.path.join(
@@ -337,7 +337,7 @@ class ModelNode:
                     
                     # 检查脚本是否存在
                     if not os.path.exists(script_path):
-                        print(f"⚠️ 服务器脚本不存在: {script_path}")
+                        print(f" 服务器脚本不存在: {script_path}")
                         continue
                     
                     server_params = StdioServerParameters(
@@ -350,12 +350,12 @@ class ModelNode:
                             await session.initialize()
                             loaded_tools = await load_mcp_tools(session)
                             tools.extend(loaded_tools)
-                            print(f"✅ 从 {server_name} 服务器加载了 {len(loaded_tools)} 个工具")
+                            print(f" 从 {server_name} 服务器加载了 {len(loaded_tools)} 个工具")
                 elif "amap" not in server_name:
                     # 非高德地图服务器，跳过
                     continue
             except Exception as e:
-                print(f"❌ 加载 {server_name} 服务器工具失败: {e}")
+                print(f" 加载 {server_name} 服务器工具失败: {e}")
         
         return tools
 
@@ -417,7 +417,7 @@ class ToolNode:
                 # 添加工具消息到更新的消息列表
                 updated_messages.append(tool_message)
                 
-                print(f"🔧 执行高德地图工具：{tool_name}")
+                print(f" 执行高德地图工具：{tool_name}")
                 print(f"   参数：{tool_args}")
                 result_str = result_content[:100] if result_content else "None"
                 print(f"   结果：{result_str}...")
@@ -524,7 +524,7 @@ class ToolNode:
             error_msg = f"执行高德工具 {tool_name} 时发生错误: {str(e)}"
             # 检查是否是 TaskGroup 错误
             if "unhandled errors in a TaskGroup" in str(e):
-                print("⚠️ 检测到 Streamable HTTP 连接的 TaskGroup 异常。这通常是由于 mcp 库在关闭连接时的竞态条件导致的。")
+                print(" 检测到 Streamable HTTP 连接的 TaskGroup 异常。这通常是由于 mcp 库在关闭连接时的竞态条件导致的。")
                 print("   建议：检查 mcp 库版本，或尝试在网络更稳定的环境下运行。")
             return error_msg
 
@@ -575,7 +575,7 @@ class AmapAgent:
         self.model_node.tm = tools_and_model
         self.tool_node = ToolNode(self.tm.config)
         self.app = self._build_and_compile_graph()
-        print("✅ 高德地图 LangGraph 工作流初始化完成")
+        print(" 高德地图 LangGraph 工作流初始化完成")
     
     def _build_and_compile_graph(self):
         """构建和编译 LangGraph 工作流"""

@@ -56,16 +56,16 @@ class ToolsAndModel:
         config_path = os.path.join(os.path.dirname(__file__), "mcp.json")
         
         if not os.path.exists(config_path):
-            print(f"⚠️ 配置文件不存在: {config_path}")
+            print(f" 配置文件不存在: {config_path}")
             return {}
         
         try:
             with open(config_path, 'r', encoding='utf-8') as f:
                 config = json.load(f)
-                print("✅ 成功加载 Routing/mcp.json 配置文件")
+                print(" 成功加载 Routing/mcp.json 配置文件")
                 return config.get("mcpServers", {})
         except Exception as e:
-            print(f"❌ 加载配置文件失败: {e}")
+            print(f" 加载配置文件失败: {e}")
             return {}
     
     def get_llm(self):
@@ -131,7 +131,7 @@ class ModelNode:
         
         # 如果没有工具可用，应该抛出错误而不是降级处理
         if not tools:
-            error_msg = "❌ 无法加载日志读取工具，MCP服务器可能未正确运行。请检查服务器配置和连接。"
+            error_msg = " 无法加载日志读取工具，MCP服务器可能未正确运行。请检查服务器配置和连接。"
             print(error_msg)
             # 返回错误状态，而不是降级处理
             return {
@@ -168,7 +168,7 @@ class ModelNode:
         # 获取日志读取服务器配置
         log_config = self.config.get("log-reader")
         if not log_config or log_config.get("transport") != "stdio":
-            print("⚠️ 日志读取服务器配置未找到或不是stdio类型")
+            print(" 日志读取服务器配置未找到或不是stdio类型")
             return tools
         
         try:
@@ -182,7 +182,7 @@ class ModelNode:
             
             # 检查脚本是否存在
             if not os.path.exists(script_path):
-                print(f"⚠️ 服务器脚本不存在: {script_path}")
+                print(f" 服务器脚本不存在: {script_path}")
                 return tools  # 返回空列表而不是字符串
             
             server_params = StdioServerParameters(
@@ -202,15 +202,15 @@ class ModelNode:
                         # 尝试加载MCP工具
                         loaded_tools = await load_mcp_tools(session)
                         tools.extend(loaded_tools)
-                        debug_print(f"✅ 从日志读取服务器加载了 {len(loaded_tools)} 个工具: {[t.name for t in loaded_tools]}")
+                        debug_print(f" 从日志读取服务器加载了 {len(loaded_tools)} 个工具: {[t.name for t in loaded_tools]}")
             except Exception as inner_e:
-                print(f"❌ 与服务器通信时发生错误: {inner_e}")
+                print(f" 与服务器通信时发生错误: {inner_e}")
                 import traceback
                 traceback.print_exc()  # 输出详细错误堆栈
                 return tools  # 返回空列表
                 
         except Exception as e:
-            print(f"❌ 加载日志读取服务器工具失败: {e}")
+            print(f" 加载日志读取服务器工具失败: {e}")
             import traceback
             traceback.print_exc()  # 输出详细错误堆栈
         
@@ -274,7 +274,7 @@ class ToolNode:
                 # 添加工具消息到更新的消息列表
                 updated_messages.append(tool_message)
                 
-                print(f"🔧 执行日志读取工具：{tool_name}")
+                print(f" 执行日志读取工具：{tool_name}")
                 print(f"   参数：{tool_args}")
                 result_str = result_content[:100] if result_content else "None"
                 print(f"   结果：{result_str}...")
@@ -299,7 +299,7 @@ class ToolNode:
         log_config = self.config.get("log-reader")
         
         if not log_config or log_config.get("transport") != "stdio":
-            print("⚠️ 日志读取服务器配置未找到或不是stdio类型")
+            print(" 日志读取服务器配置未找到或不是stdio类型")
             return f"Log reader server not configured: {tool_name}"
         
         # 修正服务器脚本路径
@@ -313,7 +313,7 @@ class ToolNode:
         
         # 检查脚本是否存在
         if not os.path.exists(script_path):
-            print(f"⚠️ 服务器脚本不存在: {script_path}")
+            print(f" 服务器脚本不存在: {script_path}")
             return f"Log reader server script not found: {script_path}"
         
         try:
@@ -409,7 +409,7 @@ class LogReaderAgent:
         self.model_node = ModelNode(self.tm.get_llm(), self.tm.config)
         self.tool_node = ToolNode(self.tm.config)
         self.app = self._build_and_compile_graph()
-        print("✅ 日志读取 LangGraph 工作流初始化完成")
+        print(" 日志读取 LangGraph 工作流初始化完成")
     
     def _build_and_compile_graph(self):
         """构建和编译 LangGraph 工作流"""
