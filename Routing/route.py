@@ -1,21 +1,26 @@
 """
 路由模块 - 负责意图识别和路由到适当的代理
-使用 LangGraph 完整结构实现
+使用 LangGraph 完整结构实现，支持会话管理和历史上下文
 """
 import os
 import sys
 import asyncio
-from typing import Literal, TypedDict
+from typing import Literal, TypedDict, List, Optional
+from datetime import datetime
 
 # 添加项目根目录到Python路径，解决模块导入问题
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage, SystemMessage, BaseMessage
 from langgraph.graph import StateGraph, START, END
 from Routing.calculator import create_calculator_agent
 from Routing.log_reader import create_log_reader_agent
 from Routing.amap import create_amap_agent
 from Routing.rag_agent import create_rag_agent
+
+# 导入缓存和会话管理器
+from Routing.tool_cache import tool_cache
+from Routing.conversation_manager import conversation_manager
 
 # 加载环境变量
 from dotenv import load_dotenv
@@ -33,19 +38,25 @@ class Route(BaseModel):
     )
 
 
-# State
+# State - 扩展以支持会话和历史
 class State(TypedDict):
     input: str
+    session_id: Optional[str]  # 新增：会话 ID
     decision: str
     output: str
+    history: Optional[List[BaseMessage]]  # 新增：历史消息
 
 
-# 节点函数
+# 节点函数（更新为支持历史上下文）
 async def handle_calculator_request(state: State):
     """处理计算器请求"""
     print("路由到计算器代理")
     agent = await create_calculator_agent()
-    result = await agent.ainvoke(state["input"])
+    
+    # 构建包含历史的输入
+    input_with_context = _build_input_with_history(state)
+    
+    result = await agent.ainvoke(input_with_context)
     output = result.get("response", {}).get("content", "") if result.get("status") == "success" else result.get("error", "")
     return {"output": output}
 
@@ -54,7 +65,10 @@ async def handle_log_reader_request(state: State):
     """处理日志读取请求"""
     print("路由到日志读取代理")
     agent = await create_log_reader_agent()
-    result = await agent.ainvoke(state["input"])
+    
+    input_with_context = _build_input_with_history(state)
+    
+    result = await agent.ainvoke(input_with_context)
     output = result.get("response", {}).get("content", "") if result.get("status") == "success" else result.get("error", "")
     return {"output": output}
 
@@ -63,7 +77,10 @@ async def handle_amap_request(state: State):
     """处理高德地图请求"""
     print("路由到高德地图代理")
     agent = await create_amap_agent()
-    result = await agent.ainvoke(state["input"])
+    
+    input_with_context = _build_input_with_history(state)
+    
+    result = await agent.ainvoke(input_with_context)
     output = result.get("response", {}).get("content", "") if result.get("status") == "success" else result.get("error", "")
     return {"output": output}
 
@@ -72,13 +89,54 @@ async def handle_rag_request(state: State):
     """处理RAG知识库查询请求"""
     print("路由到RAG知识库代理")
     agent = await create_rag_agent()
-    result = await agent.ainvoke(state["input"])
+    
+    input_with_context = _build_input_with_history(state)
+    
+    result = await agent.ainvoke(input_with_context)
     output = result.get("response", {}).get("content", "") if result.get("status") == "success" else result.get("error", "")
     return {"output": output}
 
 
+def _build_input_with_history(state: State) -> str:
+    """
+    构建包含历史上下文的输入
+    
+    Args:
+        state: 当前状态
+        
+    Returns:
+        包含历史上下文的输入文本
+    """
+    session_id = state.get("session_id")
+    current_input = state["input"]
+    
+    # 如果没有会话 ID，直接返回当前输入
+    if not session_id:
+        return current_input
+    
+    # 获取历史消息
+    history = conversation_manager.get_recent_history(session_id, n=6)
+    
+    if not history:
+        return current_input
+    
+    # 构建带上下文的输入
+    context_parts = []
+    context_parts.append("【对话历史】")
+    
+    for msg in history[-6:]:  # 最近 3 轮对话
+        role = "用户" if isinstance(msg, HumanMessage) else "助手"
+        content = msg.content[:200]  # 限制每条历史消息长度
+        context_parts.append(f"{role}: {content}")
+    
+    context_parts.append("\n【当前问题】")
+    context_parts.append(current_input)
+    
+    return "\n".join(context_parts)
+
+
 async def route_request(state: State):
-    """路由请求到适当的节点"""
+    """路由请求到适当的节点（支持历史上下文）"""
     from langchain_openai import ChatOpenAI
     import json
     
@@ -89,7 +147,14 @@ async def route_request(state: State):
         temperature=0
     )
     
-    # 使用 SystemMessage 和 HumanMessage 进行区分
+    # 获取历史消息用于意图识别
+    session_id = state.get("session_id")
+    history_messages = []
+    
+    if session_id:
+        history_messages = conversation_manager.get_recent_history(session_id, n=4)
+    
+    # 构建消息列表
     messages = [
         SystemMessage(
             content="""请分析以下用户输入的意图类别，严格按照以下JSON格式返回结果：
@@ -101,10 +166,17 @@ async def route_request(state: State):
 - "amap": 地图、位置、导航或天气等问题
 - "rag_query": 关于AI趋势、医学知识、产品介绍等知识库内容的问题
 
+注意：结合对话历史来判断用户的真实意图。如果用户在追问之前的问题，应该路由到相同的代理。
+
 不要返回其他任何内容，只需要上述格式的JSON。"""
         ),
-        HumanMessage(content=f"用户输入: {state['input']}")
     ]
+    
+    # 添加历史消息（如果有）
+    messages.extend(history_messages)
+    
+    # 添加当前用户输入
+    messages.append(HumanMessage(content=f"用户输入: {state['input']}"))
     
     # 调用模型获取原始响应
     response = llm.invoke(messages)
@@ -212,35 +284,182 @@ def build_router_workflow():
 router_workflow = build_router_workflow()
 
 
-async def main():
-    """主函数 - 演示路由功能"""
-    print("=" * 70)
-    print("Router 演示程序 (LangGraph 结构)")
-    print("=" * 70)
+# ===== 新增：高级 API 支持循环对话 =====
+
+async def chat_with_session(user_input: str, session_id: Optional[str] = None) -> dict:
+    """
+    与 AI 进行对话（支持多轮对话）
     
-    # 测试用例
-    test_inputs = [
-        "计算 25 * 17 + 45 / 3 的结果",
-        "2025年人工智能有哪些发展趋势?",
-        "大聪明牌口服液的功效是什么?",
-        # "帮我读取一下 application.log 文件的最后 10 行",
-        # "今天北京的天气怎么样？",
-        # "从上海到杭州的最佳路线是什么？",
-        # "分析一下 error.log 文件中有什么错误信息"
-    ]
-    
-    for i, test_input in enumerate(test_inputs, 1):
-        print(f"\n测试 {i}: {test_input}")
-        print("-" * 50)
+    Args:
+        user_input: 用户输入
+        session_id: 会话 ID（可选，不提供则创建新会话）
         
-        try:
-            # 调用工作流
-            state = await router_workflow.ainvoke({"input": test_input})
-            print(f"回应：{state['output']}")
-        except Exception as e:
-            print(f"错误：{str(e)}")
+    Returns:
+        包含回复和会话信息的字典
+    """
+    from Routing.tool_cache import tool_cache
     
-    print("\n" + "=" * 70)
+    # 如果没有提供会话 ID，创建新会话
+    if session_id is None:
+        session_id = conversation_manager.create_session()
+        print(f"\n[新会话] 会话 ID: {session_id}")
+    
+    # 保存用户消息到历史
+    conversation_manager.add_message(session_id, "user", user_input)
+    
+    # 获取缓存统计
+    cache_stats = tool_cache.get_cache_stats()
+    
+    # 构建状态
+    state = {
+        "input": user_input,
+        "session_id": session_id,
+        "decision": "",
+        "output": "",
+        "history": None
+    }
+    
+    # 执行工作流
+    try:
+        result_state = await router_workflow.ainvoke(state)
+        output = result_state.get("output", "")
+        
+        # 保存 AI 回复到历史
+        conversation_manager.add_message(session_id, "assistant", output)
+        
+        # 获取最新的缓存统计信息
+        cache_stats = tool_cache.get_cache_stats()
+        
+        return {
+            "success": True,
+            "response": output,
+            "session_id": session_id,
+            "cache_stats": cache_stats
+        }
+    
+    except Exception as e:
+        error_msg = f"处理请求时出错: {str(e)}"
+        print(f"[错误] {error_msg}")
+        
+        return {
+            "success": False,
+            "response": error_msg,
+            "session_id": session_id,
+            "error": str(e),
+            "cache_stats": cache_stats
+        }
+
+
+async def clear_session(session_id: str):
+    """清空指定会话的历史"""
+    conversation_manager.clear_session(session_id)
+    print(f"[会话管理] 已清空会话: {session_id}")
+
+
+async def get_session_info(session_id: str) -> dict:
+    """获取会话信息"""
+    session = conversation_manager.get_session(session_id)
+    if session:
+        return {
+            "exists": True,
+            "stats": session.get_stats()
+        }
+    return {"exists": False}
+
+
+async def cleanup_all():
+    """清理所有资源（应用关闭时调用）"""
+    print("\n[清理] 开始清理资源...")
+    await tool_cache.clear_all()
+    conversation_manager.clear_all()
+    print("[清理] 资源清理完成")
+
+
+async def main():
+    """主函数 - 演示路由功能（支持循环对话）"""
+    print("=" * 70)
+    print("Router 演示程序 (LangGraph 结构 + 会话管理)")
+    print("=" * 70)
+    print("\n提示：")
+    print("- 输入问题开始对话")
+    print("- 输入 'quit' 或 'exit' 退出")
+    print("- 输入 'clear' 清空当前会话历史")
+    print("- 输入 'info' 查看会话信息")
+    print("- 输入 'stats' 查看缓存统计\n")
+    
+    session_id = None
+    
+    try:
+        while True:
+            # 获取用户输入
+            user_input = input("\n您: ").strip()
+            
+            if not user_input:
+                continue
+            
+            # 检查退出命令
+            if user_input.lower() in ['quit', 'exit', 'q']:
+                print("\n再见！")
+                break
+            
+            # 检查清空命令
+            if user_input.lower() == 'clear':
+                if session_id:
+                    await clear_session(session_id)
+                    print("✓ 会话历史已清空")
+                else:
+                    print("当前没有活跃的会话")
+                continue
+            
+            # 检查信息命令
+            if user_input.lower() == 'info':
+                if session_id:
+                    info = await get_session_info(session_id)
+                    if info["exists"]:
+                        stats = info["stats"]
+                        print(f"\n会话信息:")
+                        print(f"  会话 ID: {stats['session_id']}")
+                        print(f"  消息数量: {stats['message_count']}")
+                        print(f"  持续时间: {stats['duration_seconds']:.0f} 秒")
+                    else:
+                        print("会话不存在")
+                else:
+                    print("当前没有活跃的会话")
+                continue
+            
+            # 检查统计命令
+            if user_input.lower() == 'stats':
+                cache_stats = tool_cache.get_cache_stats()
+                print(f"\n缓存统计:")
+                print(f"  缓存服务器: {cache_stats['cached_servers']}")
+                print(f"  缓存数量: {cache_stats['cache_count']}")
+                print(f"  活跃会话: {cache_stats['active_sessions']}")
+                continue
+            
+            # 正常对话
+            print("\nAI 思考中...", end="", flush=True)
+            result = await chat_with_session(user_input, session_id)
+            
+            # 更新会话 ID
+            if session_id is None:
+                session_id = result["session_id"]
+            
+            # 显示结果
+            if result["success"]:
+                print(f"\rAI: {result['response']}")
+                
+                # 显示缓存命中信息
+                if result["cache_stats"]["cache_count"] > 0:
+                    print(f"   [工具缓存: {result['cache_stats']['cache_count']} 个服务器]")
+            else:
+                print(f"\r错误: {result['response']}")
+    
+    except KeyboardInterrupt:
+        print("\n\n检测到中断，正在清理...")
+    
+    finally:
+        # 清理资源
+        await cleanup_all()
 
 
 if __name__ == "__main__":
