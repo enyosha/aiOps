@@ -158,12 +158,9 @@ def get_indexed_docs() -> dict:
 
 
 if __name__ == "__main__":
-    print("RAG Knowledge Server starting...")
-    print(f"Vector store path: {PERSIST_DIRECTORY}")
-
-    # 检查向量库是否已初始化
+    # 检查向量库是否已初始化（静默检查）
     if not os.path.exists(PERSIST_DIRECTORY):
-        print("⚠️ 向量库尚未初始化,请先运行 python Server/init_rag.py")
+        pass  # 向量库将在首次使用时自动创建
 
     # 以 stdio 模式运行
     mcp.run(transport="stdio")

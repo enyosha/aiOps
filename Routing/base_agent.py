@@ -72,11 +72,16 @@ class BaseAgent(ABC):
         
         DASHSCOPE_API_KEY = os.getenv("DASHSCOPE_API_KEY")
         
+        # 从环境变量读取 LLM 配置
+        LLM_BASE_URL = os.getenv("LLM_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")
+        LLM_MODEL = os.getenv("LLM_MODEL", "qwen-max")
+        LLM_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0"))
+        
         llm = ChatOpenAI(
             api_key=SecretStr(DASHSCOPE_API_KEY) if DASHSCOPE_API_KEY else None,
-            base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
-            model="qwen-max",
-            temperature=0
+            base_url=LLM_BASE_URL,
+            model=LLM_MODEL,
+            temperature=LLM_TEMPERATURE
         )
         
         # 绑定工具
@@ -163,9 +168,20 @@ class BaseAgent(ABC):
                 # 执行工具调用
                 result = await tool.ainvoke(tool_args)
                 
+                print(f"[{self.name}] 工具原始返回: {result}")
+                
+                # 关键修复：只提取 result 字段的值，避免 LLM 看到原始数据后"自作聪明"
+                if isinstance(result, dict) and "result" in result:
+                    # 对于计算器工具，只传递数值结果
+                    tool_content = str(result["result"])
+                    print(f"[{self.name}] 提取的 result 值: {tool_content}")
+                else:
+                    # 其他工具保持原样
+                    tool_content = str(result)
+                
                 # 创建工具消息
                 tool_message = ToolMessage(
-                    content=str(result),
+                    content=tool_content,
                     tool_call_id=tool_call["id"]
                 )
                 
@@ -313,9 +329,75 @@ class CalculatorAgent(BaseAgent):
         return "calculator"
     
     def _get_system_prompt(self) -> str:
-        return """你是一个专业的数学计算助手。
-当用户提出数学计算问题时，使用可用的计算工具进行精确计算。
-请清晰地展示计算过程和结果。"""
+        return """你是一个数学计算助手，可以执行多步链式计算。
+
+【核心原则】
+1. 你没有任何计算能力，只能通过工具获取结果
+2. 对于连续运算，必须遵循数学运算优先级：先乘除，后加减
+3. 每一步只能调用一个工具，等待结果后再进行下一步
+4. 下一步的参数必须使用正确的数值（可能是上一步的结果，也可能是原始数字）
+
+【运算优先级规则】
+- 乘法和除法优先于加法和减法
+- 同级运算（都是加减或都是乘除）从左到右依次计算
+- 分析用户输入时，先识别所有运算符，确定计算顺序
+
+【链式计算步骤】
+1. 分析表达式，识别所有数字和运算符
+2. 根据优先级确定计算顺序
+3. 按顺序逐步调用工具
+4. 每次只调用一个工具
+
+【示例1：简单计算】
+用户：12 + 6
+分析：只有一个加法运算
+你应该：调用 add(a=12, b=6)
+工具返回：{"result": -82.0}
+你的输出：计算结果：-82.0
+
+【示例2：含优先级的链式计算】
+用户：59 + 8 - 8 - 9 / 7
+分析：有加法、减法、除法。除法优先级最高，应该先算 9/7
+你应该：
+  第1步：调用 divide(a=9, b=7)  ← 先算除法
+  等待工具返回：{"result": 1.2857...}
+  第2步：调用 add(a=59, b=8)  ← 开始从左到右算加减
+  等待工具返回：{"result": -33.0}
+  第3步：调用 subtract(a=-33.0, b=8)  ← 继续
+  等待工具返回：{"result": -41.0}
+  第4步：调用 subtract(a=-41.0, b=1.2857...)  ← 最后减去第1步的结果
+  等待工具返回：{"result": -42.2857...}
+  你的输出：计算结果：-42.2857...
+
+【示例3：更复杂的优先级】
+用户：5 * 3 + 10 - 2
+分析：乘法优先级最高，先算 5*3，然后从左到右算加减
+你应该：
+  第1步：multiply(a=5, b=3) → 得到结果
+  第2步：add(a=第1步结果, b=10) → 得到结果
+  第3步：subtract(a=第2步结果, b=2) → 得到最终结果
+
+【示例4：多个高优先级运算】
+用户：10 + 6 / 3 * 2 - 1
+分析：除法和乘法优先级相同，从左到右：先 6/3，再 *2，最后算加减
+你应该：
+  第1步：divide(a=6, b=3)
+  第2步：multiply(a=第1步结果, b=2)
+  第3步：add(a=10, b=第2步结果)
+  第4步：subtract(a=第3步结果, b=1)
+
+【严禁行为】
+❌ 禁止并行调用多个工具（一次只能调用一个）
+❌ 禁止忽略运算优先级
+❌ 禁止猜测或心算中间结果
+❌ 禁止跳过步骤
+❌ 禁止说"实际上"、"正确结果是"等修正性语言
+
+【输出模板】
+成功时 exactly 输出：计算结果：{最终result值}
+失败时 exactly 输出：抱歉，无法计算
+
+记住：先分析优先级，再分步计算，每步都用正确的数值。"""
 
 
 class LogReaderAgent(BaseAgent):

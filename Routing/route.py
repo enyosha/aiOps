@@ -28,6 +28,11 @@ load_dotenv()
 
 DASHSCOPE_API_KEY = os.getenv("DASHSCOPE_API_KEY")
 
+# LLM 配置（从环境变量读取）
+LLM_BASE_URL = os.getenv("LLM_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")
+LLM_MODEL = os.getenv("LLM_MODEL", "qwen-max")
+LLM_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0"))
+
 
 # Schema for structured output to use as routing logic
 from pydantic import BaseModel, Field
@@ -142,9 +147,9 @@ async def route_request(state: State):
     
     llm = ChatOpenAI(
         api_key=DASHSCOPE_API_KEY,
-        base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
-        model="qwen-max",
-        temperature=0
+        base_url=LLM_BASE_URL,
+        model=LLM_MODEL,
+        temperature=LLM_TEMPERATURE
     )
     
     # 获取历史消息用于意图识别

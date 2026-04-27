@@ -165,29 +165,27 @@ class GlobalToolCache:
         print(f"[ToolCache] 启动服务器: {command} {' '.join(processed_args)}")
         
         try:
+            # 使用 MultiServerMCPClient 来管理连接
             server_params = StdioServerParameters(
                 command=command,
                 args=processed_args,
             )
             
-            print(f"[ToolCache] 启动服务器: {command} {' '.join(processed_args)}")
+            # 创建客户端并加载工具
+            client = MultiServerMCPClient({
+                server_name: {
+                    "transport": "stdio",
+                    "command": command,
+                    "args": processed_args
+                }
+            })
             
-            # 手动管理异步上下文，保持连接活跃
-            stdio_transport = stdio_client(server_params)
-            read_stream, write_stream = await stdio_transport.__aenter__()
+            # 获取工具
+            tools = await client.get_tools()
             
-            session = ClientSession(read_stream, write_stream)
-            await session.__aenter__()
-            await session.initialize()
-            
-            tools = await load_mcp_tools(session)
-            
-            # 保存会话和传输层引用，保持连接活跃
+            # 保存客户端引用以保持连接
             self._sessions[server_name] = {
-                "session": session,
-                "transport": stdio_transport,
-                "read_stream": read_stream,
-                "write_stream": write_stream
+                "client": client,
             }
             
             print(f"[ToolCache] 成功加载 {len(tools)} 个工具: {server_name}")
@@ -204,25 +202,44 @@ class GlobalToolCache:
         # 解析环境变量
         if "{AMAP_API_KEY}" in url:
             api_key = os.getenv("AMAP_API_KEY", "")
+            if not api_key:
+                raise ValueError("AMAP_API_KEY 环境变量未设置")
             url = url.replace("{AMAP_API_KEY}", api_key)
         
-        http_transport = streamable_http_client(url=url)
-        read, write, get_session_id = await http_transport.__aenter__()
+        print(f"[ToolCache] 连接 HTTP 服务器: {url[:50]}...")
         
-        session = ClientSession(read, write)
-        await session.__aenter__()
-        await session.initialize()
-        
-        tools = await load_mcp_tools(session)
-        
-        # 保存会话
-        self._sessions[server_name] = {
-            "session": session,
-            "transport": http_transport
-        }
-        
-        print(f"[ToolCache] 成功加载 {len(tools)} 个工具: {server_name}")
-        return tools
+        try:
+            # 添加超时处理
+            import asyncio
+            http_transport = streamable_http_client(url=url)
+            
+            # 设置超时
+            try:
+                read, write, get_session_id = await asyncio.wait_for(
+                    http_transport.__aenter__(),
+                    timeout=10.0  # 10秒超时
+                )
+            except asyncio.TimeoutError:
+                raise TimeoutError(f"连接超时: {server_name} (10秒)")
+            
+            session = ClientSession(read, write)
+            await session.__aenter__()
+            await session.initialize()
+            
+            tools = await load_mcp_tools(session)
+            
+            # 保存会话
+            self._sessions[server_name] = {
+                "session": session,
+                "transport": http_transport
+            }
+            
+            print(f"[ToolCache] 成功加载 {len(tools)} 个工具: {server_name}")
+            return tools
+            
+        except Exception as e:
+            print(f"[ToolCache] 加载 HTTP 工具失败 [{server_name}]: {e}")
+            raise
     
     async def _cleanup_server(self, server_name: str):
         """清理指定服务器的连接和缓存"""
@@ -232,22 +249,30 @@ class GlobalToolCache:
         if server_name in self._sessions:
             session_info = self._sessions[server_name]
             try:
-                # 先关闭会话
+                # 关闭会话（针对 streamable-http）
                 session = session_info.get("session")
-                if session:
+                if session and hasattr(session, '__aexit__'):
                     try:
                         await session.__aexit__(None, None, None)
                     except Exception:
                         pass  # 忽略清理时的异常
                 
-                # 再关闭传输层
+                # 关闭客户端（针对 stdio）
+                client = session_info.get("client")
+                if client and hasattr(client, 'close'):
+                    try:
+                        await client.close()
+                    except Exception:
+                        pass  # 忽略清理时的异常
+                        
+                # 关闭 transport
                 transport = session_info.get("transport")
-                if transport:
+                if transport and hasattr(transport, '__aexit__'):
                     try:
                         await transport.__aexit__(None, None, None)
                     except Exception:
                         pass  # 忽略清理时的异常
-            except Exception as e:
+            except Exception:
                 # 静默处理清理错误，避免干扰用户
                 pass
             
