@@ -51,6 +51,7 @@ class Route(BaseModel):
 class State(TypedDict):
     input: str
     session_id: Optional[str]  # 新增：会话 ID
+    rag_backend: int  # 新增：RAG 向量后端 (0=ChromaDB, 1=Milvus)
     decision: str
     output: str
     history: Optional[List[BaseMessage]]  # 新增：历史消息
@@ -97,7 +98,8 @@ async def handle_amap_request(state: State):
 async def handle_rag_request(state: State):
     """处理RAG知识库查询请求"""
     print("路由到RAG知识库代理")
-    agent = await create_rag_agent()
+    rag_backend = state.get("rag_backend", 0)
+    agent = await create_rag_agent(backend=rag_backend)
     
     input_with_context = _build_input_with_history(state)
     
@@ -346,13 +348,14 @@ async def initialize_redis_and_tunnel():
 
 # ===== 新增：高级 API 支持循环对话 =====
 
-async def chat_with_session(user_input: str, session_id: Optional[str] = None) -> dict:
+async def chat_with_session(user_input: str, session_id: Optional[str] = None, rag_backend: int = 0) -> dict:
     """
     与 AI 进行对话（支持多轮对话）
     
     Args:
         user_input: 用户输入
         session_id: 会话 ID（可选，不提供则创建新会话）
+        rag_backend: RAG 向量后端 (0=ChromaDB, 1=Milvus)
         
     Returns:
         包含回复和会话信息的字典
@@ -374,6 +377,7 @@ async def chat_with_session(user_input: str, session_id: Optional[str] = None) -
     state = {
         "input": user_input,
         "session_id": session_id,
+        "rag_backend": rag_backend,
         "decision": "",
         "output": "",
         "history": None

@@ -433,16 +433,33 @@ class AmapAgent(BaseAgent):
 class RAGAgent(BaseAgent):
     """RAG 知识库 Agent"""
     
-    def __init__(self):
+    def __init__(self, backend: int = 0):
+        """
+        Args:
+            backend: 向量库后端 (0=ChromaDB, 1=Milvus)
+        """
         super().__init__("RAGAgent")
+        self.backend = backend
     
     def _get_server_name(self) -> str:
         return "rag-knowledge"
     
     def _get_system_prompt(self) -> str:
-        return """你是一个专业的知识库查询助手。
+        backend_name = "Milvus (远程)" if self.backend == 1 else "ChromaDB (本地)"
+        backend_instruction = ""
+        if self.backend == 1:
+            backend_instruction = (
+                f"\n【重要】当前向量搜索后端为: {backend_name}。"
+                "调用 search_knowledge 或 get_indexed_docs 工具时，必须传入参数 backend=1。"
+            )
+        else:
+            backend_instruction = (
+                f"\n当前向量搜索后端为: {backend_name}。"
+                "调用 search_knowledge 或 get_indexed_docs 工具时使用默认 backend=0 即可。"
+            )
+        return f"""你是一个专业的知识库查询助手。
 当用户询问关于 AI 趋势、医学知识、产品介绍等问题时，使用 RAG 工具从知识库中检索相关信息。
-请基于检索到的信息提供准确、详细的回答。"""
+请基于检索到的信息提供准确、详细的回答。{backend_instruction}"""
 
 
 # ===== 工厂函数（保持向后兼容）=====
@@ -468,8 +485,12 @@ async def create_amap_agent():
     return agent
 
 
-async def create_rag_agent():
-    """创建 RAG Agent"""
-    agent = RAGAgent()
+async def create_rag_agent(backend: int = 0):
+    """创建 RAG Agent
+    
+    Args:
+        backend: 向量库后端 (0=ChromaDB, 1=Milvus)
+    """
+    agent = RAGAgent(backend=backend)
     await agent.initialize()
     return agent

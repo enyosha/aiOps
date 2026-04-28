@@ -1,11 +1,12 @@
 """
 RAG向量索引初始化脚本
 扫描Data目录,加载PDF、JSON、TXT文件并建立向量索引
+支持 ChromaDB（本地）和 Milvus（远程，通过 SSH 隧道）
 """
 import os
 import sys
 import json
-from typing import List, Dict
+from typing import List, Dict, Optional
 from dotenv import load_dotenv
 from langchain_chroma import Chroma
 from langchain_openai import OpenAIEmbeddings
@@ -17,6 +18,18 @@ from langchain_community.document_loaders import (
 )
 from pydantic import SecretStr
 
+# Milvus 相关
+from pymilvus import (
+    connections as milvus_connections,
+    Collection,
+    FieldSchema,
+    CollectionSchema,
+    DataType,
+    utility,
+)
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+from Routing.milvus_tunnel_manager import MilvusTunnelManager
+
 # 加载环境变量
 load_dotenv()
 
@@ -25,6 +38,11 @@ DASHSCOPE_API_KEY = os.getenv("DASHSCOPE_API_KEY")
 # 路径配置
 DATA_DIRECTORY = os.path.join(os.path.dirname(__file__), "..", "Data")
 PERSIST_DIRECTORY = os.path.join(os.path.dirname(__file__), "..", "vector_store")
+
+# Milvus 配置
+MILVUS_LOCAL_PORT = int(os.getenv("MILVUS_LOCAL_PORT", "19531"))
+MILVUS_COLLECTION_NAME = "knowledge_base"
+MILVUS_EMBEDDING_DIM = 1024  # DashScope text-embedding-v3 输出维度
 
 
 def load_pdf_files(directory: str) -> List:
@@ -138,6 +156,139 @@ def load_txt_files(directory: str) -> List:
             print(f"      加载失败: {str(e)}")
 
     return documents
+
+
+def init_milvus_collection() -> Optional[Collection]:
+    """初始化 Milvus Collection（创建或获取）"""
+    try:
+        # 连接到 Milvus（本地隧道端口）
+        milvus_connections.connect(
+            alias="default",
+            host="127.0.0.1",
+            port=str(MILVUS_LOCAL_PORT)
+        )
+
+        # 检查 Collection 是否已存在
+        if utility.has_collection(MILVUS_COLLECTION_NAME):
+            print(f"  Milvus Collection '{MILVUS_COLLECTION_NAME}' 已存在，获取引用")
+            collection = Collection(MILVUS_COLLECTION_NAME)
+            collection.load()
+            return collection
+
+        # 定义 Schema
+        fields = [
+            FieldSchema(name="id", dtype=DataType.INT64, is_primary=True, auto_id=True),
+            FieldSchema(name="text", dtype=DataType.VARCHAR, max_length=4096),
+            FieldSchema(name="embedding", dtype=DataType.FLOAT_VECTOR, dim=MILVUS_EMBEDDING_DIM),
+            FieldSchema(name="source", dtype=DataType.VARCHAR, max_length=256),
+            FieldSchema(name="file_type", dtype=DataType.VARCHAR, max_length=10),
+        ]
+        schema = CollectionSchema(fields=fields, description="RAG Knowledge Base")
+        collection = Collection(name=MILVUS_COLLECTION_NAME, schema=schema)
+
+        # 创建向量索引
+        index_params = {
+            "metric_type": "COSINE",
+            "index_type": "IVF_FLAT",
+            "params": {"nlist": 128}
+        }
+        collection.create_index(
+            field_name="embedding",
+            index_params=index_params
+        )
+        print(f"  Milvus Collection '{MILVUS_COLLECTION_NAME}' 创建成功")
+        collection.load()
+        return collection
+
+    except Exception as e:
+        print(f"  Milvus Collection 初始化失败: {e}")
+        return None
+
+
+def store_to_milvus(valid_docs: List, embeddings_model) -> dict:
+    """将文档存储到 Milvus
+
+    Args:
+        valid_docs: 已验证的文档块列表（每个有 page_content 和 metadata）
+        embeddings_model: DashScope embeddings 模型
+
+    Returns:
+        dict: 包含状态和统计信息
+    """
+    print("\n" + "-" * 50)
+    print("Milvus 向量存储")
+    print("-" * 50)
+
+    tunnel = MilvusTunnelManager()
+    tunnel_ok = tunnel.create_tunnel()
+    if not tunnel_ok:
+        return {"status": "error", "message": "SSH 隧道建立失败"}
+
+    try:
+        # 初始化 Collection
+        print("  连接 Milvus...")
+        collection = init_milvus_collection()
+        if collection is None:
+            return {"status": "error", "message": "Milvus Collection 初始化失败"}
+
+        print(f"  开始向量化 {len(valid_docs)} 个文档块...")
+
+        # 分批处理
+        batch_size = 20
+        total_inserted = 0
+
+        for i in range(0, len(valid_docs), batch_size):
+            batch = valid_docs[i:i + batch_size]
+
+            texts = []
+            sources = []
+            file_types = []
+            for doc in batch:
+                text = str(doc.page_content).strip()
+                texts.append(text)
+                sources.append(doc.metadata.get("source", "unknown"))
+                file_types.append(doc.metadata.get("file_type", "unknown"))
+
+            # 生成 embedding
+            try:
+                embeddings = embeddings_model.embed_documents(texts)
+            except Exception as emb_err:
+                print(f"  批次 {i // batch_size + 1} Embedding 失败: {emb_err}")
+                continue
+
+            # 插入 Milvus
+            try:
+                insert_data = [texts, embeddings, sources, file_types]
+                mr = collection.insert(insert_data)
+                total_inserted += len(mr.primary_keys)
+                if (i // batch_size + 1) % 5 == 0:
+                    print(f"  进度: {total_inserted}/{len(valid_docs)}")
+            except Exception as ins_err:
+                print(f"  批次 {i // batch_size + 1} 插入失败: {ins_err}")
+                continue
+
+        # 刷新确保持久化
+        collection.flush()
+        print(f"  Milvus 存储完成: 已插入 {total_inserted} 条向量")
+
+        return {
+            "status": "success",
+            "total_inserted": total_inserted,
+            "collection": MILVUS_COLLECTION_NAME
+        }
+
+    except Exception as e:
+        print(f"  Milvus 存储失败: {e}")
+        import traceback
+        traceback.print_exc()
+        return {"status": "error", "message": str(e)}
+
+    finally:
+        try:
+            milvus_connections.disconnect("default")
+        except Exception:
+            pass
+        tunnel.close_tunnel()
 
 
 def initialize_rag_index():
@@ -313,6 +464,13 @@ def initialize_rag_index():
         import traceback
         traceback.print_exc()
         return {"status": "error", "message": str(e)}
+
+    # 5. 存储到 Milvus（无需与 ChromaDB 共用 embedding，独立调用）
+    milvus_result = None
+    try:
+        milvus_result = store_to_milvus(valid_docs, embeddings)
+    except Exception as e:
+        print(f"\n  WARNING: Milvus 存储失败（不影响 ChromaDB）: {e}")
 
     # 统计信息
     source_files = set(doc.metadata.get("source", "unknown") for doc in split_docs)

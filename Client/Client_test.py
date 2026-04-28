@@ -82,8 +82,12 @@ async def main():
     print("  • 输入 'clear' 清空当前会话历史")
     print("  • 输入 'info' 查看会话信息")
     print("  • 输入 'stats' 查看工具缓存统计")
+    print("  • 输入 'backend' 切换 RAG 向量库 (ChromaDB / Milvus)")
     print("  • 输入 'help' 显示此帮助信息")
     print("=" * 70)
+    
+    # RAG 向量库后端: 0=ChromaDB, 1=Milvus
+    rag_backend = 0
     
     try:
         while True:
@@ -112,6 +116,7 @@ async def main():
                 print("  • 输入 'clear' 清空当前会话历史")
                 print("  • 输入 'info' 查看会话信息")
                 print("  • 输入 'stats' 查看工具缓存统计")
+                print("  • 输入 'backend' 切换 RAG 向量库 (ChromaDB / Milvus)")
                 print("  • 输入 'help' 显示此帮助信息")
                 print("=" * 70)
                 continue
@@ -125,6 +130,7 @@ async def main():
                 continue
             
             if cmd == 'info':
+                backend_name = "Milvus" if rag_backend == 1 else "ChromaDB"
                 if session_id:
                     info = await get_session_info(session_id)
                     if info["exists"]:
@@ -137,6 +143,7 @@ async def main():
                         print("❌ 会话不存在")
                 else:
                     print("⚠️ 当前没有活跃的会话")
+                print(f"   RAG 后端: {backend_name} ({rag_backend})")
                 continue
             
             if cmd == 'stats':
@@ -148,10 +155,32 @@ async def main():
                 print(f"   活跃会话: {cache_stats['active_sessions']}")
                 continue
             
+            # backend 命令: 交互式选择 RAG 向量后端（纯本地切换，由客户端传递给后续查询）
+            if cmd == 'backend':
+                current_name = "Milvus" if rag_backend == 1 else "ChromaDB"
+                print(f"\n   当前 RAG 后端: {current_name} ({rag_backend})")
+                print(f"   请选择向量数据库:")
+                print(f"     0: ChromaDB (本地)")
+                print(f"     1: Milvus  (远程)")
+                choice = input("   输入 (0/1): ").strip()
+
+                if choice == '0':
+                    rag_backend = 0
+                elif choice == '1':
+                    rag_backend = 1
+                else:
+                    print(f"   ⚠️ 无效输入 '{choice}'，保持当前后端")
+                    continue
+
+                name = "Milvus" if rag_backend == 1 else "ChromaDB"
+                print(f"   ✅ 已切换为: {name} ({rag_backend})")
+                print(f"   💡 后续 RAG 知识库查询将自动使用 {name} 后端")
+                continue
+
             # 正常对话处理
             print("\n🤖 AI 思考中...", end="", flush=True)
             
-            result = await chat_with_session(user_input, session_id)
+            result = await chat_with_session(user_input, session_id, rag_backend=rag_backend)
             
             # 更新会话 ID
             if session_id is None:
