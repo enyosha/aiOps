@@ -21,6 +21,7 @@ from Routing.rag_agent import create_rag_agent
 # 导入缓存和会话管理器
 from Routing.tool_cache import tool_cache
 from Routing.conversation_manager import conversation_manager
+from Routing.ssh_tunnel_manager import SSHTunnelManager
 
 # 加载环境变量
 from dotenv import load_dotenv
@@ -32,6 +33,9 @@ DASHSCOPE_API_KEY = os.getenv("DASHSCOPE_API_KEY")
 LLM_BASE_URL = os.getenv("LLM_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")
 LLM_MODEL = os.getenv("LLM_MODEL", "qwen-max")
 LLM_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0"))
+
+# 全局 SSH 隧道管理器实例
+tunnel_manager: Optional[SSHTunnelManager] = None
 
 
 # Schema for structured output to use as routing logic
@@ -289,6 +293,57 @@ def build_router_workflow():
 router_workflow = build_router_workflow()
 
 
+async def initialize_redis_and_tunnel():
+    """初始化 SSH 隧道和 Redis 连接"""
+    global tunnel_manager
+
+    # 读取配置
+    ssh_host = os.getenv("SSH_HOST", "8.130.131.36")
+    ssh_port = int(os.getenv("SSH_PORT", "22"))
+    ssh_user = os.getenv("SSH_USER", "root")
+    ssh_key_path = os.path.expanduser(os.getenv("SSH_KEY_PATH", "~/.ssh/id_rsa"))
+    remote_redis_port = int(os.getenv("SSH_REMOTE_REDIS_PORT", "6379"))
+    local_redis_port = int(os.getenv("SSH_LOCAL_REDIS_PORT", "6379"))
+
+    redis_host = os.getenv("REDIS_HOST", "localhost")
+    redis_port = int(os.getenv("REDIS_PORT", local_redis_port))
+    redis_password = os.getenv("REDIS_PASSWORD") or None
+    redis_ttl = int(os.getenv("REDIS_SESSION_TTL", "604800"))
+
+    # 创建 SSH 隧道
+    tunnel_manager = SSHTunnelManager()
+    tunnel_success = tunnel_manager.create_tunnel(
+        ssh_host=ssh_host,
+        ssh_port=ssh_port,
+        ssh_user=ssh_user,
+        ssh_key_path=ssh_key_path,
+        remote_redis_port=remote_redis_port,
+        local_redis_port=local_redis_port
+    )
+
+    if not tunnel_success:
+        print("[警告] SSH 隧道创建失败，将尝试直接连接 Redis")
+
+    # 配置 ConversationManager 使用 Redis
+    redis_config = {
+        "host": redis_host,
+        "port": redis_port,
+        "password": redis_password,
+        "ttl": redis_ttl
+    }
+
+    # 重新初始化 ConversationManager（由于是单例，需要特殊处理）
+    # 这里我们通过修改全局实例的方式来实现
+    conversation_manager.use_redis = True
+    try:
+        from Routing.redis_session_store import RedisSessionStore
+        conversation_manager.redis_store = RedisSessionStore(**redis_config)
+        print("[ConversationManager] Redis 持久化已启用")
+    except Exception as e:
+        print(f"[ConversationManager] Redis 初始化失败，将使用内存模式: {e}")
+        conversation_manager.use_redis = False
+
+
 # ===== 新增：高级 API 支持循环对话 =====
 
 async def chat_with_session(user_input: str, session_id: Optional[str] = None) -> dict:
@@ -375,8 +430,24 @@ async def get_session_info(session_id: str) -> dict:
 async def cleanup_all():
     """清理所有资源（应用关闭时调用）"""
     print("\n[清理] 开始清理资源...")
+
+    # 清理工具缓存
     await tool_cache.clear_all()
+
+    # 清理会话
     conversation_manager.clear_all()
+
+    # 关闭 Redis 连接
+    if hasattr(conversation_manager, 'redis_store') and conversation_manager.redis_store:
+        conversation_manager.redis_store.close()
+        print("[清理] Redis 连接已关闭")
+
+    # 关闭 SSH 隧道
+    global tunnel_manager
+    if tunnel_manager:
+        tunnel_manager.close_tunnel()
+        print("[清理] SSH 隧道已关闭")
+
     print("[清理] 资源清理完成")
 
 
@@ -468,4 +539,10 @@ async def main():
 
 
 if __name__ == "__main__":
+    load_dotenv()
+
+    # 初始化 Redis 和 SSH 隧道
+    asyncio.run(initialize_redis_and_tunnel())
+
+    # 运行主程序
     asyncio.run(main())

@@ -97,47 +97,76 @@ class ConversationManager:
             cls._instance._initialized = False
         return cls._instance
     
-    def __init__(self):
+    def __init__(self, use_redis: bool = True, redis_config: dict = None):
         if self._initialized:
             return
-        
+
         self._sessions: Dict[str, Session] = {}
         self._default_max_history = 20  # 默认保留 20 条消息
         self._session_timeout = 3600  # 会话超时时间（秒）
+
+        # Redis 持久化层
+        self.use_redis = use_redis
+        self.redis_store = None
+        if use_redis and redis_config:
+            try:
+                from .redis_session_store import RedisSessionStore
+                self.redis_store = RedisSessionStore(**redis_config)
+                print("[ConversationManager] Redis 持久化已启用")
+            except Exception as e:
+                print(f"[ConversationManager] Redis 初始化失败，将使用内存模式: {e}")
+                self.use_redis = False
+
         self._initialized = True
     
     def create_session(self, session_id: Optional[str] = None) -> str:
         """
         创建新会话
-        
+
         Args:
             session_id: 可选的会话 ID，不提供则自动生成
-            
+
         Returns:
             会话 ID
         """
         if session_id is None:
             session_id = str(uuid.uuid4())
-        
-        self._sessions[session_id] = Session(
+
+        session = Session(
             session_id=session_id,
             max_history=self._default_max_history
         )
-        
+        self._sessions[session_id] = session
+
+        # 持久化到 Redis
+        if self.use_redis and self.redis_store:
+            self.redis_store.save_session(session)
+
         print(f"[ConversationManager] 创建新会话: {session_id}")
         return session_id
     
     def get_session(self, session_id: str) -> Optional[Session]:
-        """获取会话对象"""
+        """获取会话对象（优先从内存，其次从 Redis 加载）"""
+        # 1. 先从内存查找
         session = self._sessions.get(session_id)
         if session:
             session.last_active = time.time()
-        return session
+            return session
+
+        # 2. 从 Redis 加载
+        if self.use_redis and self.redis_store:
+            session = self.redis_store.load_session(session_id)
+            if session:
+                self._sessions[session_id] = session  # 缓存到内存
+                print(f"[ConversationManager] 从 Redis 加载会话: {session_id}")
+                return session
+
+        return None
     
     def add_message(self, session_id: str, role: str, content: str):
         """
         添加消息到指定会话
-        
+
         Args:
             session_id: 会话 ID
             role: 消息角色 ("user" 或 "assistant")
@@ -145,8 +174,13 @@ class ConversationManager:
         """
         if session_id not in self._sessions:
             self.create_session(session_id)
-        
-        self._sessions[session_id].add_message(role, content)
+
+        session = self._sessions[session_id]
+        session.add_message(role, content)
+
+        # 持久化到 Redis
+        if self.use_redis and self.redis_store:
+            self.redis_store.save_session(session)
     
     def get_history(self, session_id: str) -> List[BaseMessage]:
         """
@@ -190,21 +224,39 @@ class ConversationManager:
         """删除指定会话"""
         if session_id in self._sessions:
             del self._sessions[session_id]
-            print(f"[ConversationManager] 删除会话: {session_id}")
+
+        # 从 Redis 删除
+        if self.use_redis and self.redis_store:
+            self.redis_store.delete_session(session_id)
+
+        print(f"[ConversationManager] 删除会话: {session_id}")
     
     def cleanup_expired_sessions(self):
         """清理过期的会话"""
+        # 内存清理
         expired_ids = [
             sid for sid, session in self._sessions.items()
             if session.is_expired(self._session_timeout)
         ]
-        
+
         for sid in expired_ids:
             self.remove_session(sid)
-        
+
+        # Redis 清理
+        if self.use_redis and self.redis_store:
+            redis_cleaned = self.redis_store.cleanup_expired_sessions()
+            if redis_cleaned > 0:
+                print(f"[ConversationManager] Redis 清理了 {redis_cleaned} 个过期会话")
+
         if expired_ids:
-            print(f"[ConversationManager] 清理了 {len(expired_ids)} 个过期会话")
+            print(f"[ConversationManager] 内存清理了 {len(expired_ids)} 个过期会话")
     
+    def list_recent_sessions(self, limit: int = 10) -> List[Dict]:
+        """列出最近的会话"""
+        if self.use_redis and self.redis_store:
+            return self.redis_store.list_recent_sessions(limit)
+        return []
+
     def get_all_sessions(self) -> Dict[str, Dict]:
         """获取所有会话的统计信息"""
         return {
