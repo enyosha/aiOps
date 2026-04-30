@@ -32,6 +32,7 @@ env/
 *.swp
 *.swo
 *~
+.qoder/
 
 # Environment variables
 .env.local
