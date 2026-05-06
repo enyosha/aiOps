@@ -24,6 +24,13 @@
         "../Server/rag_server.py"
       ],
       "transport": "stdio"
+    },
+    "ops-diagnosis": {
+      "command": "python",
+      "args": [
+        "../Server/ops_diagnosis_server.py"
+      ],
+      "transport": "stdio"
     }
   }
 }

@@ -50,3 +50,9 @@ aiOps.pem
 # Stray files
 =2.4.0
 nul
+
+# Vector Stores (ChromaDB)
+vector_store/
+
+# Knowledge Base Source Files
+ops_knowledge_entries/

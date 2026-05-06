@@ -42,7 +42,7 @@ tunnel_manager: Optional[SSHTunnelManager] = None
 from pydantic import BaseModel, Field
 
 class Route(BaseModel):
-    step: Literal["calculator", "log_reader", "amap", "rag_query"] = Field(
+    step: Literal["calculator", "log_reader", "amap", "rag_query", "ops_diagnosis"] = Field(
         description="The next step in the routing process"
     )
 
@@ -105,6 +105,23 @@ async def handle_rag_request(state: State):
     
     result = await agent.ainvoke(input_with_context)
     output = result.get("response", {}).get("content", "") if result.get("status") == "success" else result.get("error", "")
+    return {"output": output}
+
+
+async def handle_ops_diagnosis_request(state: State):
+    """处理运维诊断请求"""
+    print("路由到运维诊断代理")
+    from Routing.ops_agent import run_ops_diagnosis
+    
+    # 提取容器名称（如果有）
+    container_name = None
+    
+    result = await run_ops_diagnosis(
+        user_input=state["input"],
+        container_name=container_name
+    )
+    
+    output = result.get("diagnosis", {}).get("content", "") if result.get("status") == "success" else result.get("message", "")
     return {"output": output}
 
 
@@ -176,6 +193,7 @@ async def route_request(state: State):
 - "log_reader": 日志读取或分析问题
 - "amap": 地图、位置、导航或天气等问题
 - "rag_query": 关于AI趋势、医学知识、产品介绍等知识库内容的问题
+- "ops_diagnosis": 运维故障诊断问题（如 502 错误、OOM、容器崩溃、服务不可用等）
 
 注意：结合对话历史来判断用户的真实意图。如果用户在追问之前的问题，应该路由到相同的代理。
 
@@ -250,6 +268,8 @@ def route_decision(state: State):
         return "handle_amap_request"
     elif state["decision"] == "rag_query":
         return "handle_rag_request"
+    elif state["decision"] == "ops_diagnosis":
+        return "handle_ops_diagnosis_request"
     else:
         # 如果无法识别意图，返回错误节点
         return "error_handler"
@@ -265,6 +285,7 @@ def build_router_workflow():
     builder.add_node("handle_log_reader_request", handle_log_reader_request)
     builder.add_node("handle_amap_request", handle_amap_request)
     builder.add_node("handle_rag_request", handle_rag_request)
+    builder.add_node("handle_ops_diagnosis_request", handle_ops_diagnosis_request)
     builder.add_node("route_request", route_request)
     builder.add_node("error_handler", error_handler)
 
@@ -278,6 +299,7 @@ def build_router_workflow():
             "handle_log_reader_request": "handle_log_reader_request",
             "handle_amap_request": "handle_amap_request",
             "handle_rag_request": "handle_rag_request",
+            "handle_ops_diagnosis_request": "handle_ops_diagnosis_request",
             "error_handler": "error_handler"
         },
     )
@@ -285,6 +307,7 @@ def build_router_workflow():
     builder.add_edge("handle_log_reader_request", END)
     builder.add_edge("handle_amap_request", END)
     builder.add_edge("handle_rag_request", END)
+    builder.add_edge("handle_ops_diagnosis_request", END)
     builder.add_edge("error_handler", END)
 
     # 编译工作流

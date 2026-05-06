@@ -45,7 +45,7 @@ _search_backend = 0
 mcp = FastMCP("RAG Knowledge Server")
 
 # ChromaDB持久化路径(相对于项目根目录)
-PERSIST_DIRECTORY = os.path.join(os.path.dirname(__file__), "..", "vector_store")
+PERSIST_DIRECTORY = os.path.join(os.path.dirname(__file__), "..", "vector_store", "base_vector_store")
 
 
 class MilvusVectorStore:

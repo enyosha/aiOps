@@ -37,7 +37,7 @@ DASHSCOPE_API_KEY = os.getenv("DASHSCOPE_API_KEY")
 
 # 路径配置
 DATA_DIRECTORY = os.path.join(os.path.dirname(__file__), "..", "Data")
-PERSIST_DIRECTORY = os.path.join(os.path.dirname(__file__), "..", "vector_store")
+PERSIST_DIRECTORY = os.path.join(os.path.dirname(__file__), "..", "vector_store", "base_vector_store")
 
 # Milvus 配置
 MILVUS_LOCAL_PORT = int(os.getenv("MILVUS_LOCAL_PORT", "19531"))
