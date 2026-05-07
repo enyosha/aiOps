@@ -169,9 +169,11 @@ class GlobalToolCache:
             server_params = StdioServerParameters(
                 command=command,
                 args=processed_args,
+                env=None,  # 使用当前环境变量
             )
             
-            # 创建客户端并加载工具
+            # 【关键】创建客户端并加载工具
+            # MultiServerMCPClient 会自动处理子进程的 stderr 输出
             client = MultiServerMCPClient({
                 server_name: {
                     "transport": "stdio",

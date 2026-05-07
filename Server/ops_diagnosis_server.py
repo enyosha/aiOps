@@ -6,6 +6,7 @@ Ops Diagnosis MCP Server - 提供运维故障诊断服务
 import os
 import sys
 import json
+import logging
 from typing import List, Dict, Any, Optional
 from fastmcp import FastMCP
 from dotenv import load_dotenv
@@ -13,6 +14,14 @@ import paramiko
 import chromadb
 from langchain_chroma import Chroma
 from langchain_community.embeddings import DashScopeEmbeddings
+
+# 配置日志输出到 stderr
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(message)s',
+    stream=sys.stderr
+)
+logger = logging.getLogger(__name__)
 
 # 确保加载 .env 文件
 load_dotenv()
@@ -61,23 +70,36 @@ mcp = FastMCP("Ops Diagnosis Server")
 # ===== 工具定义 =====
 
 @mcp.tool()
-def search_ops_knowledge(query: str, top_k: int = 3) -> dict:
+def search_ops_knowledge(query: str, top_k: int = 3, filter_type: Optional[str] = None) -> dict:
     """
     在运维知识库中搜索相关诊断方案
     
     Args:
         query: 搜索查询文本（可以是症状描述、错误关键词等）
         top_k: 返回结果数量（默认 3）
+        filter_type: 过滤类型（'diagnosis_flow' 或 'solution'，可选）
     
     Returns:
         包含匹配结果和元数据的字典
     """
     # 【关键】打印检索前的 query，便于调试和优化
-    print(f"\n[Ops Knowledge Search] Query: '{query}'")
-    print(f"[Ops Knowledge Search] Top-K: {top_k}")
+    logger.info(f"\n[Ops Knowledge Search] Query: '{query}'")
+    logger.info(f"[Ops Knowledge Search] Top-K: {top_k}")
+    if filter_type:
+        logger.info(f"[Ops Knowledge Search] Filter Type: {filter_type}")
     
     try:
-        results = ops_vector_store.similarity_search_with_score(query, k=top_k)
+        # 构建 ChromaDB 的 where 过滤条件
+        where_clause = {}
+        if filter_type:
+            where_clause["type"] = filter_type
+        
+        # 执行相似度搜索
+        results = ops_vector_store.similarity_search_with_score(
+            query, 
+            k=top_k,
+            filter=where_clause if where_clause else None
+        )
         
         # 格式化返回结果
         formatted_results = []
@@ -92,10 +114,10 @@ def search_ops_knowledge(query: str, top_k: int = 3) -> dict:
                 "metadata": doc.metadata
             })
         
-        print(f"\n[Ops Knowledge Search] ===== 检索结果 =====")
-        print(f"Query: '{query}'")
-        print(f"Top-K: {top_k}")
-        print(f"Found {len(formatted_results)} results:\n")
+        logger.info(f"\n[Ops Knowledge Search] ===== 检索结果 =====")
+        logger.info(f"Query: '{query}'")
+        logger.info(f"Top-K: {top_k}")
+        logger.info(f"Found {len(formatted_results)} results:\n")
         
         for i, result in enumerate(formatted_results, 1):
             score = result['similarity_score']
@@ -103,14 +125,14 @@ def search_ops_knowledge(query: str, top_k: int = 3) -> dict:
             # 转换为相似度分数（0-1，越大越相似）
             similarity = 1 - score if score <= 1 else score
             
-            print(f"  [{i}] {result['title']}")
-            print(f"      ID: {result['id']}")
-            print(f"      类型: {result['type']}")
-            print(f"      分类: {result['category']}")
-            print(f"      距离分数: {score:.4f} (越小越相似)")
-            print(f"      相似度: {similarity:.4f} (越大越相似)")
-            print(f"      内容预览: {result['content_preview'][:100]}...")
-            print()
+            logger.info(f"  [{i}] {result['title']}")
+            logger.info(f"      ID: {result['id']}")
+            logger.info(f"      类型: {result['type']}")
+            logger.info(f"      分类: {result['category']}")
+            logger.info(f"      距离分数: {score:.4f} (越小越相似)")
+            logger.info(f"      相似度: {similarity:.4f} (越大越相似)")
+            logger.info(f"      内容预览: {result['content_preview'][:100]}...")
+            logger.info("")
         
         return {
             "status": "success",
@@ -120,7 +142,7 @@ def search_ops_knowledge(query: str, top_k: int = 3) -> dict:
         }
     
     except Exception as e:
-        print(f"[Ops Knowledge Search] Error: {str(e)}")
+        logger.error(f"[Ops Knowledge Search] Error: {str(e)}")
         return {
             "status": "error",
             "query": query,
@@ -163,7 +185,7 @@ def fetch_docker_logs(
     
     cmd = " ".join(cmd_parts)
     
-    print(f"\n[Fetch Logs] Executing: {cmd}")
+    logger.info(f"\n[Fetch Logs] Executing: {cmd}")
     
     # 通过 SSH 执行命令
     try:
@@ -220,6 +242,8 @@ def check_memory_usage() -> dict:
         stdin, stdout, stderr = ssh.exec_command("free -h")
         memory_info = stdout.read().decode('utf-8')
         
+        logger.info(f"[Check Memory] Raw output: {repr(memory_info)}")
+        
         ssh.close()
         
         return {
@@ -264,7 +288,7 @@ def load_ops_knowledge_entries() -> dict:
         sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
         from Server.init_ops_knowledge import initialize_ops_knowledge
         
-        print("开始加载运维知识条目...")
+        logger.info("开始加载运维知识条目...")
         result = initialize_ops_knowledge()
         
         return {
@@ -279,5 +303,5 @@ def load_ops_knowledge_entries() -> dict:
         }
 
 if __name__ == "__main__":
-    print("Ops Diagnosis Server starting...")
+    logger.info("Ops Diagnosis Server starting...")
     mcp.run(transport="stdio")
