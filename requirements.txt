@@ -14,3 +14,5 @@ redis>=4.0.0
 paramiko==3.4.0
 sshtunnel>=0.4.0
 pymilvus>=2.4.0
+fastapi>=0.100.0
+uvicorn>=0.23.0

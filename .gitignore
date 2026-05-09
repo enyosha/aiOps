@@ -56,3 +56,6 @@ vector_store/
 
 # Knowledge Base Source Files
 ops_knowledge_entries/
+
+#App Files
+APP_readOnly/

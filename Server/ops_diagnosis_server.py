@@ -48,11 +48,16 @@ ops_vector_store = Chroma(
 )
 
 # SSH 连接管理器（从 .env 读取，无硬编码默认值）
+ssh_key_path = os.getenv("SSH_KEY_PATH", "./aiOps.pem")
+# 如果是相对路径，转换为绝对路径（相对于项目根目录）
+if not os.path.isabs(ssh_key_path):
+    ssh_key_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), ssh_key_path)
+
 ssh_config = {
     "host": os.getenv("SSH_HOST"),
     "port": int(os.getenv("SSH_PORT", "22")),
     "username": os.getenv("SSH_USER"),
-    "key_file": os.path.expanduser(os.getenv("SSH_KEY_PATH"))
+    "key_file": ssh_key_path
 }
 
 # 验证必要配置

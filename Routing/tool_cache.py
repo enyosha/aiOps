@@ -99,7 +99,7 @@ class GlobalToolCache:
         if server_name in self._cache:
             entry = self._cache[server_name]
             if not entry.is_expired(ttl):
-                print(f"[ToolCache] 使用缓存的工具: {server_name}")
+                print(f"[ToolCache] 使用缓存的工具: {server_name} (PID保持)")
                 return entry.tools
             else:
                 print(f"[ToolCache] 缓存已过期，重新加载: {server_name}")
@@ -166,14 +166,6 @@ class GlobalToolCache:
         
         try:
             # 使用 MultiServerMCPClient 来管理连接
-            server_params = StdioServerParameters(
-                command=command,
-                args=processed_args,
-                env=None,  # 使用当前环境变量
-            )
-            
-            # 【关键】创建客户端并加载工具
-            # MultiServerMCPClient 会自动处理子进程的 stderr 输出
             client = MultiServerMCPClient({
                 server_name: {
                     "transport": "stdio",

@@ -1,0 +1,15 @@
+{
+  "task_id": "ede35b16-3c2c-43de-8bd7-97a6e543d07f",
+  "timestamp": "2026-05-08T18:37:50.177216",
+  "alert_event": {
+    "alert_name": "ContainerRestartDetected",
+    "container_name": "ruoyi-app",
+    "alert_time": "2026-05-08T14:30:00",
+    "alert_type": "container_restart",
+    "description": "检测到容器在过去5分钟内发生重启"
+  },
+  "diagnosis_result": {
+    "status": "error",
+    "message": "streamable_http_client() got an unexpected keyword argument 'headers'"
+  }
+}
