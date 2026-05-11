@@ -9,10 +9,18 @@ test.py - 支持循环对话的测试客户端
 """
 import os
 import sys
+
+# 禁用 Python 输出缓冲，实现实时打印（必须在导入其他模块之前设置）
+os.environ['PYTHONUNBUFFERED'] = '1'
+
 import io
 import time
 import signal
-sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+
+# 配置标准输出为行缓冲模式
+sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', line_buffering=True)
+sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', line_buffering=True)
+
 import asyncio
 
 # 添加项目根目录到Python路径，以便正确导入模块
@@ -83,6 +91,7 @@ async def main():
     print("  • 输入 'info' 查看会话信息")
     print("  • 输入 'stats' 查看工具缓存统计")
     print("  • 输入 'backend' 切换 RAG 向量库 (ChromaDB / Milvus)")
+    print("  • 输入 'diag <问题描述>' 快速启动诊断")
     print("  • 输入 'help' 显示此帮助信息")
     print("=" * 70)
     
@@ -117,6 +126,7 @@ async def main():
                 print("  • 输入 'info' 查看会话信息")
                 print("  • 输入 'stats' 查看工具缓存统计")
                 print("  • 输入 'backend' 切换 RAG 向量库 (ChromaDB / Milvus)")
+                print("  • 输入 'diag <问题描述>' 快速启动诊断")
                 print("  • 输入 'help' 显示此帮助信息")
                 print("=" * 70)
                 continue
@@ -177,8 +187,58 @@ async def main():
                 print(f"   💡 后续 RAG 知识库查询将自动使用 {name} 后端")
                 continue
 
+            # 快速诊断命令
+            if cmd.startswith('diag ') or cmd.startswith('diagnose '):
+                # 提取诊断描述
+                diag_input = user_input.split(' ', 1)[1] if ' ' in user_input else user_input
+                
+                print("\n" + "="*70)
+                print("🔍 启动运维诊断流程")
+                print("="*70)
+                print(f"诊断目标: {diag_input}")
+                print(f"容器名称: ruoyi-app")
+                print("-"*70)
+                print("诊断过程将实时显示如下:")
+                print("-"*70)
+                
+                # 直接调用诊断Agent
+                from Routing.diagnosis_agent import run_diagnosis
+                from datetime import datetime
+                
+                alert_event = {
+                    "alert_name": "",
+                    "alert_type": "",
+                    "alert_time": datetime.now().isoformat(),
+                    "description": diag_input
+                }
+                
+                result = await run_diagnosis(alert_event, container_name="ruoyi-app")
+                
+                print("\n" + "="*70)
+                if result["status"] == "success":
+                    print("✅ 诊断完成")
+                    print("="*70)
+                    print(f"\n📋 诊断报告:\n")
+                    print(result['diagnosis']['content'])
+                    print("\n" + "="*70)
+                    print(f"迭代次数: {result.get('iteration_count', 'N/A')}")
+                    data_collected = result.get('data_collected', {})
+                    print(f"数据收集状态:")
+                    print(f"  - 日志: {'✓' if data_collected.get('logs') else '✗'}")
+                    print(f"  - 内存: {'✓' if data_collected.get('memory') else '✗'}")
+                    print(f"  - CPU: {'✓' if data_collected.get('cpu') else '✗'}")
+                    print(f"  - 服务状态: {'✓' if data_collected.get('service_status') else '✗'}")
+                    print("="*70)
+                else:
+                    print("❌ 诊断失败")
+                    print("="*70)
+                    print(f"错误信息: {result.get('message', '未知错误')}")
+                    print("="*70)
+                
+                continue
+
             # 正常对话处理
-            print("\n🤖 AI 思考中...", end="", flush=True)
+            print("\n🤖 AI 思考中...", flush=True)
             
             result = await chat_with_session(user_input, session_id, rag_backend=rag_backend)
             

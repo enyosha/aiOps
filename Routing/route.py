@@ -110,16 +110,50 @@ async def handle_rag_request(state: State):
 
 async def handle_ops_diagnosis_request(state: State):
     """处理运维诊断请求"""
-    print("路由到运维诊断代理")
-    from Routing.ops_agent import run_ops_diagnosis
+    print("\n" + "="*70)
+    print("🔍 启动运维诊断流程")
+    print("="*70)
+    print(f"诊断目标: {state['input']}")
+    print(f"容器名称: ruoyi-app")
+    print("-"*70)
+    print("诊断过程将实时显示如下:")
+    print("-"*70)
     
-    # 提取容器名称（如果有）
-    container_name = None
+    from Routing.diagnosis_agent import run_diagnosis
     
-    result = await run_ops_diagnosis(
-        user_input=state["input"],
+    # 构造告警事件（alert_name 和 alert_type 为空）
+    alert_event = {
+        "alert_name": "",
+        "alert_type": "",
+        "alert_time": datetime.now().isoformat(),
+        "description": state["input"]
+    }
+    
+    # 提取容器名称（使用默认值）
+    container_name = "ruoyi-app"
+    
+    result = await run_diagnosis(
+        alert_event=alert_event,
         container_name=container_name
     )
+    
+    print("\n" + "="*70)
+    if result.get("status") == "success":
+        print("✅ 诊断完成")
+        print("="*70)
+        print(f"迭代次数: {result.get('iteration_count', 'N/A')}")
+        data_collected = result.get('data_collected', {})
+        print(f"数据收集状态:")
+        print(f"  - 日志: {'✓' if data_collected.get('logs') else '✗'}")
+        print(f"  - 内存: {'✓' if data_collected.get('memory') else '✗'}")
+        print(f"  - CPU: {'✓' if data_collected.get('cpu') else '✗'}")
+        print(f"  - 服务状态: {'✓' if data_collected.get('service_status') else '✗'}")
+        print("="*70)
+    else:
+        print("❌ 诊断失败")
+        print("="*70)
+        print(f"错误信息: {result.get('message', '未知错误')}")
+        print("="*70)
     
     output = result.get("diagnosis", {}).get("content", "") if result.get("status") == "success" else result.get("message", "")
     return {"output": output}
@@ -189,11 +223,17 @@ async def route_request(state: State):
 {"step": "intent_type"}
 
 其中 intent_type 只能是以下值之一：
-- "calculator": 数学计算问题
+- "calculator": 数学计算问题（如 5+2, 10*3等）
 - "log_reader": 日志读取或分析问题
 - "amap": 地图、位置、导航或天气等问题
 - "rag_query": 关于AI趋势、医学知识、产品介绍等知识库内容的问题
-- "ops_diagnosis": 运维故障诊断问题（如 502 错误、OOM、容器崩溃、服务不可用,网页打不开等）
+- "ops_diagnosis": 运维故障诊断问题
+
+**ops_diagnosis 触发条件**：
+- 包含错误代码：500, 502, 503, 404, timeout等
+- 包含故障描述：服务不可用、网页打不开、容器崩溃、OOM、内存溢出等
+- 包含诊断关键词：diagnose, 诊断, 排查, 检查服务等
+- 用户明确要求诊断某个问题
 
 注意：结合对话历史来判断用户的真实意图。如果用户在追问之前的问题，应该路由到相同的代理。
 
