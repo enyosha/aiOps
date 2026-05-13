@@ -8,6 +8,10 @@ SSH 隧道管理器
 import warnings
 warnings.filterwarnings('ignore', category=DeprecationWarning, module='paramiko')
 
+# 屏蔽 sshtunnel 的重试错误日志（Redis 不可用时会频繁重试）
+import logging
+logging.getLogger('sshtunnel').setLevel(logging.CRITICAL)
+
 import paramiko
 from sshtunnel import SSHTunnelForwarder
 from typing import Optional
