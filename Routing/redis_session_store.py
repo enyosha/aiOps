@@ -84,7 +84,8 @@ class RedisSessionStore:
             return True
 
         except Exception as e:
-            print(f"[Redis] 保存会话失败: {e}")
+            # Redis 连接失败时提示用户
+            print(f"[警告] Redis 连接失败，会话将无法持久化: {e}")
             return False
 
     def load_session(self, session_id: str) -> Optional[Session]:
@@ -127,7 +128,8 @@ class RedisSessionStore:
             return session
 
         except Exception as e:
-            print(f"[Redis] 加载会话失败: {e}")
+            # Redis 连接失败时提示用户
+            print(f"[警告] Redis 连接失败，无法加载历史会话: {e}")
             return None
 
     def list_recent_sessions(self, limit: int = 10) -> List[Dict]:
@@ -162,7 +164,8 @@ class RedisSessionStore:
             return sessions
 
         except Exception as e:
-            print(f"[Redis] 列出会话失败: {e}")
+            # Redis 连接失败时提示用户，但不影响主流程
+            print(f"[警告] Redis 连接失败，会话将无法持久化: {e}")
             return []
 
     def delete_session(self, session_id: str) -> bool:
@@ -187,7 +190,8 @@ class RedisSessionStore:
             return True
 
         except Exception as e:
-            print(f"[Redis] 删除会话失败: {e}")
+            # Redis 连接失败时提示用户
+            print(f"[警告] Redis 连接失败，无法删除会话: {e}")
             return False
 
     def cleanup_expired_sessions(self) -> int:
@@ -215,7 +219,8 @@ class RedisSessionStore:
             return expired_count
 
         except Exception as e:
-            print(f"[Redis] 清理过期会话失败: {e}")
+            # Redis 连接失败时提示用户
+            print(f"[警告] Redis 连接失败，无法清理过期会话: {e}")
             return 0
 
     def close(self):

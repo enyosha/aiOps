@@ -7,6 +7,11 @@ test.py - 支持循环对话的测试客户端
 3. 提供会话管理命令
 4. 支持从 Redis 加载历史会话
 """
+# 屏蔽 paramiko 和 cryptography 的弃用警告
+import warnings
+warnings.filterwarnings('ignore', category=DeprecationWarning, module='paramiko')
+warnings.filterwarnings('ignore', category=DeprecationWarning, module='cryptography')
+
 import os
 import sys
 
@@ -212,7 +217,10 @@ async def main():
                     "description": diag_input
                 }
                 
-                result = await run_diagnosis(alert_event, container_name="ruoyi-app")
+                # 获取项目根目录的 .env 文件路径
+                import os
+                env_path = os.path.join(os.path.dirname(__file__), '..', '.env')
+                result = await run_diagnosis(alert_event, container_name="ruoyi-app", env_file_path=env_path)
                 
                 print("\n" + "="*70)
                 if result["status"] == "success":
@@ -279,8 +287,10 @@ if __name__ == "__main__":
     from dotenv import load_dotenv
     from Routing.route import initialize_redis_and_tunnel
     
-    # 加载环境变量
-    load_dotenv()
+    # 加载环境变量（使用项目根目录的 .env 文件）
+    import os
+    env_path = os.path.join(os.path.dirname(__file__), '..', '.env')
+    load_dotenv(env_path)
     
     # 初始化 Redis 和 SSH 隧道
     asyncio.run(initialize_redis_and_tunnel())

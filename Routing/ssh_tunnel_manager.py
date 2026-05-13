@@ -4,6 +4,10 @@ SSH 隧道管理器
 用于安全连接远程 Redis 服务器，通过 SSH 隧道将远程端口转发到本地。
 """
 
+# 屏蔽 paramiko 的弃用警告
+import warnings
+warnings.filterwarnings('ignore', category=DeprecationWarning, module='paramiko')
+
 import paramiko
 from sshtunnel import SSHTunnelForwarder
 from typing import Optional
@@ -55,7 +59,7 @@ class SSHTunnelManager:
                     continue
 
             if private_key is None:
-                print(f"[SSH Tunnel] 错误: 无法识别的密钥格式: {ssh_key_path}")
+                print(f"[警告] SSH 密钥格式不正确: {ssh_key_path}")
                 return False
 
             # 创建隧道
@@ -73,10 +77,10 @@ class SSHTunnelManager:
             return True
 
         except FileNotFoundError:
-            print(f"[SSH Tunnel] 错误: 找不到 SSH 密钥文件: {ssh_key_path}")
+            print(f"[警告] SSH 密钥文件不存在: {ssh_key_path}")
             return False
         except Exception as e:
-            print(f"[SSH Tunnel] 创建隧道失败: {e}")
+            print(f"[警告] SSH 隧道创建失败: {e}")
             return False
 
     def close_tunnel(self):

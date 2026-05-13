@@ -10,6 +10,8 @@ import logging
 import sys
 from typing import List, Optional
 from datetime import datetime, timedelta
+import warnings
+warnings.filterwarnings('ignore', category=DeprecationWarning, module='paramiko')
 import paramiko
 from dotenv import load_dotenv
 
@@ -25,21 +27,26 @@ logger = logging.getLogger(__name__)
 load_dotenv()
 
 # SSH配置（从.env读取）
-ssh_key_path = os.getenv("SSH_KEY_PATH", "./aiOps.pem")
+# 优先使用新的 BACKEND_SSH_* 配置，如果没有则回退到旧的 SSH_* 配置
+ssh_host = os.getenv("BACKEND_SSH_HOST") or os.getenv("SSH_HOST")
+ssh_port = os.getenv("BACKEND_SSH_PORT") or os.getenv("SSH_PORT", "22")
+ssh_user = os.getenv("BACKEND_SSH_USER") or os.getenv("SSH_USER")
+ssh_key_path = os.getenv("BACKEND_SSH_KEY_PATH") or os.getenv("SSH_KEY_PATH", "./aiOps.pem")
+
 # 如果是相对路径，转换为绝对路径（相对于项目根目录）
 if not os.path.isabs(ssh_key_path):
     ssh_key_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), ssh_key_path)
 
 ssh_config = {
-    "host": os.getenv("SSH_HOST"),
-    "port": int(os.getenv("SSH_PORT", "22")),
-    "username": os.getenv("SSH_USER"),
+    "host": ssh_host,
+    "port": int(ssh_port),
+    "username": ssh_user,
     "key_file": ssh_key_path
 }
 
 # 验证必要配置
 if not all([ssh_config["host"], ssh_config["username"]]):
-    raise ValueError("缺少必要的SSH配置，请检查.env文件中的SSH_HOST, SSH_USER, SSH_KEY_PATH")
+    raise ValueError("缺少必要的SSH配置，请检查.env文件中的 BACKEND_SSH_HOST/SSH_HOST, BACKEND_SSH_USER/SSH_USER, BACKEND_SSH_KEY_PATH/SSH_KEY_PATH")
 
 # 创建 FastMCP 实例
 mcp = FastMCP("Log Reader MCP Server")

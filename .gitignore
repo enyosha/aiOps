@@ -45,6 +45,7 @@ logs/*.txt
 # MCP
 mcp.json.local
 aiOps.pem
+aiOps_Server.pem
 .env
 
 # Stray files

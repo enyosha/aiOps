@@ -11,6 +11,7 @@ DiagnosisAgent - 纯LLM驱动的运维诊断Agent（与OpsAgent完全隔离）
 import os
 import sys
 import json
+import re
 from typing import TypedDict, List, Optional, Literal
 from datetime import datetime, timedelta
 
@@ -57,6 +58,12 @@ class DiagnosisState(TypedDict):
     
     # 诊断结果
     diagnosis_result: Optional[dict]   # 最终诊断结果
+    
+    # === 新增字段：多服务环境支持 ===
+    config_status: str                 # "none" | "partial" | "complete"
+    servers_config: dict               # 四组件配置 {frontend, backend, database, redis}
+    discovered_containers: List[dict]  # Docker ps 发现的容器
+    service_status_summary: str        # 服务未启动时的摘要信息
 
 # ===== LLM 初始化 =====
 
@@ -66,6 +73,144 @@ llm = ChatOpenAI(
     model=LLM_MODEL,
     temperature=LLM_TEMPERATURE
 )
+
+# ===== 辅助函数 =====
+
+def load_servers_config(env_file_path: str = ".env") -> dict:
+    """从 .env 文件加载服务器配置"""
+    from dotenv import dotenv_values
+    
+    config = dotenv_values(env_file_path)
+    
+    servers = {
+        "frontend": {},
+        "backend": {},
+        "database": {},
+        "redis": {}
+    }
+    
+    # 前端配置
+    if config.get("FRONTEND_SSH_HOST"):
+        servers["frontend"] = {
+            "ssh_host": config["FRONTEND_SSH_HOST"],
+            "ssh_port": int(config.get("FRONTEND_SSH_PORT", "22")),
+            "ssh_user": config.get("FRONTEND_SSH_USER", "root"),
+            "ssh_key_path": config.get("FRONTEND_SSH_KEY_PATH", ""),
+            "container_name": config.get("FRONTEND_CONTAINER_NAME", "")
+        }
+    
+    # 后端配置
+    if config.get("BACKEND_SSH_HOST"):
+        servers["backend"] = {
+            "ssh_host": config["BACKEND_SSH_HOST"],
+            "ssh_port": int(config.get("BACKEND_SSH_PORT", "22")),
+            "ssh_user": config.get("BACKEND_SSH_USER", "root"),
+            "ssh_key_path": config.get("BACKEND_SSH_KEY_PATH", ""),
+            "container_name": config.get("BACKEND_CONTAINER_NAME", "ruoyi-app")
+        }
+    
+    # 数据库配置
+    if config.get("DATABASE_HOST"):
+        servers["database"] = {
+            "host": config["DATABASE_HOST"],
+            "port": int(config.get("DATABASE_PORT", "3306")),
+            "user": config.get("DATABASE_USER", "root"),
+            "password": config.get("DATABASE_PASSWORD", ""),
+            "name": config.get("DATABASE_NAME", "")
+        }
+    
+    # Redis 配置
+    if config.get("REDIS_HOST"):
+        servers["redis"] = {
+            "host": config["REDIS_HOST"],
+            "port": int(config.get("REDIS_PORT", "6379")),
+            "password": config.get("REDIS_PASSWORD", "")
+        }
+    
+    return servers
+
+def determine_config_status(servers_config: dict) -> str:
+    """判断配置状态"""
+    configured_count = sum(1 for v in servers_config.values() if v)
+    
+    if configured_count == 0:
+        return "none"
+    elif configured_count < 4:
+        return "partial"
+    else:
+        return "complete"
+
+def get_stopped_services(state: DiagnosisState) -> List[str]:
+    """获取未启动的服务列表"""
+    required_types = ['frontend', 'backend', 'database', 'redis']
+    discovered = state.get('discovered_containers', [])
+    found_types = {c['type'] for c in discovered if c.get('type')}
+    
+    return list(set(required_types) - found_types)
+
+def has_stopped_services(state: DiagnosisState) -> bool:
+    """检查是否有服务未启动"""
+    return len(get_stopped_services(state)) > 0
+
+def check_logs_for_service_stop(state: DiagnosisState, stopped_services: List[str]) -> str:
+    """检查日志中是否有服务停止的证据"""
+    logs_data = state.get('logs_data', '')
+    if not logs_data:
+        return ""
+    
+    evidence_keywords = {
+        'frontend': ['nginx.*stop', 'frontend.*exit', 'connection refused.*80'],
+        'backend': ['java.*exit', 'spring.*shutdown', 'application.*failed', 'connection refused.*8080'],
+        'database': ['mysql.*shutdown', 'mysqld.*stop', 'connection refused.*3306'],
+        'redis': ['redis.*exit', 'redis-server.*stop', 'connection refused.*6379']
+    }
+    
+    evidence_lines = []
+    for service in stopped_services:
+        keywords = evidence_keywords.get(service, [])
+        for line in logs_data.splitlines():
+            if any(re.search(kw, line, re.IGNORECASE) for kw in keywords):
+                evidence_lines.append(line)
+    
+    return '\n'.join(evidence_lines[:20])  # 最多返回20条证据
+
+def format_stopped_services(stopped_services: List[str], logs_evidence: str) -> str:
+    """格式化服务未启动的摘要信息"""
+    summary = f"检测到以下服务未启动: {', '.join(stopped_services)}\n\n"
+    if logs_evidence:
+        summary += f"日志证据:\n{logs_evidence}"
+    return summary
+
+def identify_container_type(name: str, ports: str) -> str:
+    """根据容器名称和端口识别容器类型"""
+    name_lower = name.lower()
+    ports_lower = ports.lower()
+    
+    # 前端识别（优先级较低，避免误判）
+    if '80/tcp' in ports_lower and '8080/tcp' not in ports_lower:
+        return 'frontend'
+    if '443/tcp' in ports_lower:
+        return 'frontend'
+    if any(kw in name_lower for kw in ['frontend', 'vue', 'nginx']):
+        return 'frontend'
+    
+    # 后端识别（优先级较高）
+    if '8080/tcp' in ports_lower:
+        return 'backend'
+    if any(kw in name_lower for kw in ['app', 'backend', 'java', 'spring']):
+        return 'backend'
+    
+    # 数据库识别
+    if any(kw in name_lower for kw in ['mysql', 'mariadb', 'postgres']):
+        return 'database'
+    if '3306/tcp' in ports_lower or '5432/tcp' in ports_lower:
+        return 'database'
+    
+    # Redis 识别
+    if 'redis' in name_lower or '6379/tcp' in ports_lower:
+        return 'redis'
+    
+    return 'unknown'
 
 # ===== 节点函数 =====
 
@@ -77,6 +222,52 @@ async def analyze_node(state: DiagnosisState) -> DiagnosisState:
     print(f"[Analyze] 分析当前状态 (迭代 {state['iteration_count']}/{state['max_iterations']})")
     print(f"{'='*70}")
     
+    # === 强制检查最大迭代次数 ===
+    if state['iteration_count'] >= state['max_iterations']:
+        print(f"[Analyze] ⚠️ 已达到最大迭代次数 ({state['max_iterations']}),强制生成报告")
+        return {
+            **state,
+            "current_step": "generate_report",
+            "actions_taken": state.get('actions_taken', []) + ["force_stop_by_max_iterations"]
+        }
+    
+    # === 新增:服务未启动的快速判断 ===
+    if state.get('config_status') == 'complete' and has_stopped_services(state):
+        stopped_services = get_stopped_services(state)
+        logs_data = state.get('logs_data', '')
+        
+        # 如果已有日志数据,检查是否有服务停止的证据
+        if logs_data:
+            logs_evidence = check_logs_for_service_stop(state, stopped_services)
+            
+            if logs_evidence:  # 日志中有相关证据
+                print(f"[Analyze] 检测到 {len(stopped_services)} 个服务未启动,直接生成报告")
+                return {
+                    **state,
+                    "current_step": "generate_report",
+                    "service_status_summary": format_stopped_services(stopped_services, logs_evidence),
+                    "actions_taken": state.get('actions_taken', []) + ["detect_stopped_services"]
+                }
+    
+    # === 新增:配置不足的快速判断 ===
+    if state.get('config_status') == 'none':
+        print("[Analyze] 配置信息不足,返回错误")
+        return {
+            **state,
+            "current_step": "error_no_config",
+            "actions_taken": state.get('actions_taken', []) + ["check_config"]
+        }
+    
+    # === 新增:部分配置时触发 Docker 发现 ===
+    if state.get('config_status') == 'partial' and not state.get('discovered_containers'):
+        print("[Analyze] 配置不完整,触发 Docker 容器发现")
+        return {
+            **state,
+            "current_step": "discover_containers",
+            "actions_taken": state.get('actions_taken', []) + ["trigger_discovery"]
+        }
+    
+    # === 原有逻辑保持不变 ===
     # 构建分析提示
     actions_taken_str = ', '.join(state.get('actions_taken', [])) if state.get('actions_taken') else '无'
     
@@ -143,6 +334,207 @@ async def analyze_node(state: DiagnosisState) -> DiagnosisState:
 #     print(f"\n{'='*70}")
 #     print(f"[Scan Anomalies] 快速扫描异常时间点")
 #     print(f"{'='*70}")
+#
+#     from Routing.tool_cache import tool_cache
+#     tools = await tool_cache.get_tools("log-reader")
+#     scan_tool = next((t for t in tools if t.name == "scan_logs_for_anomalies"), None)
+#     
+#     if not scan_tool:
+#         print("[Scan Anomalies] 未找到scan_logs_for_anomalies工具")
+#         return {
+#             **state,
+#             "anomaly_timestamps": [],
+#             "iteration_count": state['iteration_count'] + 1
+#         }
+#     
+#     try:
+#         result = await scan_tool.ainvoke({
+#             "container_name": state['container_name'],
+#             "time_range_hours": 2  # 扫描过去2小时
+#         })
+#         
+#         # 解析MCP返回格式
+#         if isinstance(result, list) and len(result) > 0:
+#             first_item = result[0]
+#             if isinstance(first_item, dict) and 'text' in first_item:
+#                 scan_data = json.loads(first_item['text'])
+#             else:
+#                 scan_data = first_item
+#         else:
+#             scan_data = result
+#         
+#         if scan_data.get('status') == 'success':
+#             timestamps = scan_data.get('anomaly_timestamps', [])
+#             print(f"[Scan Anomalies] 找到 {len(timestamps)} 个异常时间点")
+#             for ts in timestamps[:5]:
+#                 print(f"  - {ts}")
+#             
+#             return {
+#                 **state,
+#                 "anomaly_timestamps": timestamps,
+#                 "iteration_count": state['iteration_count'] + 1
+#             }
+#         else:
+#             print(f"[Scan Anomalies] 扫描失败: {scan_data.get('message')}")
+#             return {
+#                 **state,
+#                 "anomaly_timestamps": [],
+#                 "iteration_count": state['iteration_count'] + 1
+#             }
+#     
+#     except Exception as e:
+#         print(f"[Scan Anomalies] 错误: {str(e)}")
+#         return {
+#             **state,
+#             "anomaly_timestamps": [],
+#             "iteration_count": state['iteration_count'] + 1
+#         }
+
+
+async def discover_containers_node(state: DiagnosisState) -> DiagnosisState:
+    """
+    节点:Docker 容器发现
+    通过 SSH 连接到所有已配置的服务器,获取所有运行中的容器信息
+    """
+    print(f"\n{'='*70}")
+    print(f"[Discover Containers] 开始 Docker 容器发现")
+    print(f"{'='*70}")
+    
+    # 从已配置的服务器中遍历所有有 SSH 配置的服务器
+    servers_config = state.get('servers_config', {})
+    
+    # 收集所有有 SSH 配置的服务器
+    ssh_servers = []
+    for server_type in ['frontend', 'backend']:
+        server = servers_config.get(server_type)
+        if server and server.get('ssh_host'):
+            ssh_servers.append((server_type, server))
+    
+    if not ssh_servers:
+        print("[Discover Containers] 没有可用的服务器配置")
+        return {
+            **state,
+            "discovered_containers": [],
+            "iteration_count": state['iteration_count'] + 1
+        }
+    
+    all_discovered = []
+    
+    # 遍历所有服务器
+    for server_type, target_server in ssh_servers:
+        try:
+            # 使用 paramiko 建立 SSH 连接
+            import warnings
+            warnings.filterwarnings('ignore', category=DeprecationWarning, module='paramiko')
+            import paramiko
+            
+            ssh_client = paramiko.SSHClient()
+            ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+            
+            # 加载 SSH 密钥
+            private_key = None
+            key_types = [
+                paramiko.RSAKey,
+                paramiko.ECDSAKey,
+                paramiko.Ed25519Key,
+            ]
+            
+            key_path = target_server.get('ssh_key_path', '')
+            for key_type in key_types:
+                try:
+                    private_key = key_type.from_private_key_file(key_path)
+                    break
+                except paramiko.SSHException:
+                    continue
+            
+            if not private_key:
+                print(f"[Discover Containers] 警告: 无法识别的密钥格式: {key_path}")
+                continue
+            
+            # 建立连接
+            ssh_client.connect(
+                hostname=target_server['ssh_host'],
+                port=target_server.get('ssh_port', 22),
+                username=target_server.get('ssh_user', 'root'),
+                pkey=private_key,
+                timeout=30
+            )
+            
+            print(f"[Discover Containers] SSH 连接成功: {target_server['ssh_host']}")
+            
+            # 执行 docker ps 命令
+            stdin, stdout, stderr = ssh_client.exec_command(
+                "docker ps --format '{{.Names}}\\t{{.Ports}}\\t{{.Status}}'"
+            )
+            
+            output = stdout.read().decode('utf-8').strip()
+            error_output = stderr.read().decode('utf-8').strip()
+            
+            if error_output:
+                print(f"[Discover Containers] Docker 命令错误: {error_output}")
+                ssh_client.close()
+                continue
+            
+            # 解析输出
+            discovered = []
+            for line in output.splitlines():
+                if not line.strip():
+                    continue
+                
+                parts = line.split('\t')
+                if len(parts) >= 2:
+                    container_name = parts[0].strip()
+                    ports = parts[1].strip()
+                    
+                    # 识别容器类型
+                    container_type = identify_container_type(container_name, ports)
+                    
+                    discovered.append({
+                        "name": container_name,
+                        "ports": ports,
+                        "type": container_type,
+                        "status": parts[2].strip() if len(parts) > 2 else "running",
+                        "server": target_server['ssh_host']
+                    })
+            
+            if discovered:
+                print(f"[Discover Containers] 在 {target_server['ssh_host']} 上发现 {len(discovered)} 个容器:")
+                for c in discovered:
+                    print(f"  - {c['name']} ({c['type']}): {c['ports']}")
+                all_discovered.extend(discovered)
+            else:
+                print(f"[Discover Containers] 在 {target_server['ssh_host']} 上未发现容器")
+            
+            # 关闭 SSH 连接
+            ssh_client.close()
+        
+        except Exception as e:
+            print(f"[Discover Containers] 连接 {target_server['ssh_host']} 失败: {str(e)}")
+            continue
+    
+    # 汇总结果
+    print(f"\n[Discover Containers] Docker 容器发现结束，一共发现了 {len(all_discovered)} 个容器:")
+    if all_discovered:
+        for c in all_discovered:
+            print(f"  - {c['name']} ({c['type']}): {c['ports']} [服务器: {c['server']}]")
+    else:
+        print("  (无)")
+    
+    # 更新 servers_config 中的容器名称
+    updated_config = state.get('servers_config', {}).copy()
+    for container in all_discovered:
+        if container['type'] == 'frontend' and not updated_config.get('frontend', {}).get('container_name'):
+            updated_config.setdefault('frontend', {})['container_name'] = container['name']
+        elif container['type'] == 'backend' and not updated_config.get('backend', {}).get('container_name'):
+            updated_config.setdefault('backend', {})['container_name'] = container['name']
+    
+    return {
+        **state,
+        "discovered_containers": all_discovered,
+        "servers_config": updated_config,
+        "config_status": "complete",  # 发现后升级为 complete
+        "iteration_count": state['iteration_count'] + 1
+    }
 #     
 #     from Routing.tool_cache import tool_cache
 #     tools = await tool_cache.get_tools("log-reader")
@@ -349,7 +741,8 @@ async def collect_data_node(state: DiagnosisState) -> DiagnosisState:
             
             if cpu_data.get('status') == 'success':
                 cpu_info = cpu_data.get('cpu_info', '')
-                print(f"[Collect Data] CPU信息已获取")
+                print(f"[Collect Data] CPU使用情况:")
+                print(f"{cpu_info}")
                 
                 return {
                     **state,
@@ -378,8 +771,10 @@ async def collect_data_node(state: DiagnosisState) -> DiagnosisState:
                 status_data = result
             
             if status_data.get('status') == 'success':
+                container_name = state['container_name']
                 service_status = f"运行中: {status_data.get('running')}, 详情: {status_data.get('status_detail')}"
-                print(f"[Collect Data] 服务状态: {service_status}")
+                print(f"[Collect Data] 服务状态 [{container_name}]:")
+                print(f"  {service_status}")
                 
                 return {
                     **state,
@@ -413,8 +808,16 @@ async def collect_data_node(state: DiagnosisState) -> DiagnosisState:
                 port_info = mysql_data.get('port_info', '')
                 docker_info = mysql_data.get('docker_info', '')
                 
-                mysql_status = f"运行中: {mysql_running}\n进程: {process_info}\n端口: {port_info}\nDocker: {docker_info}"
-                print(f"[Collect Data] MySQL状态: {'运行中' if mysql_running else '未运行'}")
+                print(f"[Collect Data] MySQL 数据库状态:")
+                print(f"  运行状态: {'✓ 运行中' if mysql_running else '✗ 未运行'}")
+                if process_info:
+                    print(f"  进程信息: {process_info}")
+                if port_info:
+                    print(f"  端口监听: {port_info}")
+                if docker_info:
+                    print(f"  Docker 容器: {docker_info}")
+                
+                mysql_status = f"运行状态: {'运行中' if mysql_running else '未运行'}\n进程: {process_info}\n端口: {port_info}\nDocker: {docker_info}"
                 
                 return {
                     **state,
@@ -429,6 +832,65 @@ async def collect_data_node(state: DiagnosisState) -> DiagnosisState:
     }
 
 
+async def generate_error_report_node(state: DiagnosisState) -> DiagnosisState:
+    """生成配置不足的错误报告"""
+    print(f"\n{'='*70}")
+    print(f"[Error Report] 生成配置错误报告")
+    print(f"{'='*70}")
+    
+    error_content = """## 错误:配置信息不足
+
+请至少提供一个服务器的 SSH 配置信息(前端、后端、数据库或 Redis)。
+
+### 配置说明:
+
+请在 `.env` 文件中添加以下配置项(根据实际情况填写):
+
+```bash
+# 后端服务配置(推荐至少配置此项)
+BACKEND_SSH_HOST=<你的服务器IP>
+BACKEND_SSH_PORT=22
+BACKEND_SSH_USER=<SSH用户名>
+BACKEND_SSH_KEY_PATH=<SSH密钥文件路径>
+BACKEND_CONTAINER_NAME=<后端容器名称>
+
+# 前端服务配置(可选,系统会自动发现)
+FRONTEND_SSH_HOST=<前端服务器IP>
+FRONTEND_SSH_PORT=22
+FRONTEND_SSH_USER=<SSH用户名>
+FRONTEND_SSH_KEY_PATH=<SSH密钥文件路径>
+FRONTEND_CONTAINER_NAME=<前端容器名称>
+
+# 数据库配置(可选)
+DATABASE_HOST=<数据库主机地址>
+DATABASE_PORT=3306
+DATABASE_USER=<数据库用户名>
+DATABASE_PASSWORD=<数据库密码>
+
+# Redis 配置(可选)
+REDIS_HOST=<Redis主机地址>
+REDIS_PORT=6379
+REDIS_PASSWORD=<Redis密码>
+```
+
+### 说明:
+- 至少配置一个服务器的 SSH 信息即可, 并保证前后端、数据库和 Redis 的配置正确, 以便系统自动发现
+- 系统会通过 Docker 自动发现其他相关服务
+- 确保 SSH 密钥文件路径正确且有读取权限
+- 请参考当前 `.env` 文件中已有的配置格式
+"""
+    
+    return {
+        **state,
+        "diagnosis_result": {
+            "content": error_content,
+            "confidence": "low",
+            "error_type": "missing_config"
+        },
+        "current_step": "complete"
+    }
+
+
 async def generate_report_node(state: DiagnosisState) -> DiagnosisState:
     """
     节点4：基于收集的所有数据生成诊断报告
@@ -437,6 +899,57 @@ async def generate_report_node(state: DiagnosisState) -> DiagnosisState:
     print(f"[Generate Report] 生成最终诊断报告")
     print(f"{'='*70}")
     
+    # === 新增:服务未启动的快速报告 ===
+    service_status_summary = state.get('service_status_summary', '')
+    if service_status_summary:
+        print("[Generate Report] 生成服务未启动的快速报告")
+        
+        prompt = f"""你是运维诊断专家。检测到以下服务未启动：
+
+{service_status_summary}
+
+请基于以上信息生成诊断报告：
+1. 明确指出哪些服务未启动
+2. 分析可能的原因（基于日志证据）
+3. 给出恢复步骤
+
+【输出格式要求】
+```markdown
+## 问题根因
+（精炼描述服务未启动的原因，引用日志证据）
+
+## 立即执行
+1. `docker start <container_name>` - 启动未运行的服务
+2. `docker logs <container_name> --tail 50` - 查看启动日志确认正常
+3. （根据实际情况补充其他步骤）...
+
+## 长期优化
+1. 配置容器自动重启策略：docker update --restart=unless-stopped <container>
+2. 添加健康检查和监控告警
+3. ...
+```
+
+**注意：只输出上述格式的内容，不要有任何其他文字！**
+"""
+        response = await llm.ainvoke(prompt)
+        
+        stopped_services = get_stopped_services(state)
+        
+        return {
+            **state,
+            "diagnosis_result": {
+                "content": response.content,
+                "confidence": "high",
+                "data_sources": {
+                    "service_status": True,
+                    "logs": bool(state.get('logs_data'))
+                },
+                "stopped_services": stopped_services
+            },
+            "current_step": "complete"
+        }
+    
+    # === 原有逻辑:正常诊断流程的报告生成 ===
     alert = state.get('alert_event', {})
     
     # 构建简洁的数据摘要
@@ -561,15 +1074,23 @@ def route_after_analyze(state: DiagnosisState) -> str:
     """根据分析结果路由到相应节点"""
     action = state['current_step']
     
-    # if action == "scan_logs":
-    #     return "scan_anomalies"
+    # === 新增:配置错误和服务未启动的快速路由 ===
+    if action == "error_no_config":
+        return "generate_error_report"
+    
+    if action == "discover_containers":
+        return "discover_containers"
+    
+    # 如果 analyze_node 已经决定生成报告(服务未启动场景),直接路由
+    if action == "generate_report":
+        return "generate_report"
+    
+    # === 原有路由逻辑保持不变 ===
     if action in ["read_logs", "check_memory", "check_cpu", "check_service", "check_mysql"]:
         return "collect_data"
-    elif action == "generate_report":
-        return "generate_report"
-    else:
-        # 默认生成报告
-        return "generate_report"
+    
+    # 默认生成报告
+    return "generate_report"
 
 
 def route_after_collect(state: DiagnosisState) -> str:
@@ -586,16 +1107,22 @@ def build_diagnosis_workflow():
     """构建诊断工作流"""
     builder = StateGraph(DiagnosisState)
     
+    # 原有节点
     builder.add_node("analyze", analyze_node)
-    # builder.add_node("scan_anomalies", scan_anomalies_node)  # 暂时注释
     builder.add_node("collect_data", collect_data_node)
     builder.add_node("generate_report", generate_report_node)
     
+    # 新增节点
+    builder.add_node("discover_containers", discover_containers_node)
+    builder.add_node("generate_error_report", generate_error_report_node)
+    
+    # 路由边
     builder.add_edge(START, "analyze")
     builder.add_conditional_edges("analyze", route_after_analyze)
-    # builder.add_edge("scan_anomalies", "analyze")  # 暂时注释
+    builder.add_edge("discover_containers", "analyze")  # 发现后回到分析
     builder.add_edge("collect_data", "analyze")
     builder.add_edge("generate_report", END)
+    builder.add_edge("generate_error_report", END)  # 新增
     
     return builder.compile()
 
@@ -606,7 +1133,11 @@ diagnosis_workflow = build_diagnosis_workflow()
 
 # ===== 对外接口 =====
 
-async def run_diagnosis(alert_event: dict, container_name: str = "ruoyi-app") -> dict:
+async def run_diagnosis(
+    alert_event: dict, 
+    container_name: str = "ruoyi-app",  # 保持原有默认值
+    env_file_path: str = ".env"
+) -> dict:
     """
     运行诊断工作流（由Grafana告警自动触发）
     
@@ -617,10 +1148,24 @@ async def run_diagnosis(alert_event: dict, container_name: str = "ruoyi-app") ->
             - alert_time: 告警时间
             - description: 告警描述
         container_name: 容器名称
+        env_file_path: 配置文件路径
     
     Returns:
         诊断结果
     """
+    # 1. 加载并验证配置
+    servers_config = load_servers_config(env_file_path)
+    config_status = determine_config_status(servers_config)
+    
+    # 2. 如果未指定容器名，尝试从配置推断
+    if container_name == "ruoyi-app" and config_status != "none":
+        # 根据告警类型推断目标容器
+        alert_type = alert_event.get('alert_type', '')
+        if 'frontend' in alert_type:
+            container_name = servers_config.get('frontend', {}).get('container_name', container_name)
+        elif 'backend' in alert_type or 'app' in alert_type:
+            container_name = servers_config.get('backend', {}).get('container_name', container_name)
+    
     initial_state: DiagnosisState = {
         "alert_event": alert_event,
         "container_name": container_name,
@@ -637,7 +1182,12 @@ async def run_diagnosis(alert_event: dict, container_name: str = "ruoyi-app") ->
         "mysql_status": None,
         "log_search_range_minutes": 0,  # 初始为0,首次读取时设为30
         "logs_collected_ranges": [],  # 已收集的日志范围列表
-        "diagnosis_result": None
+        "diagnosis_result": None,
+        # 新增字段
+        "config_status": config_status,
+        "servers_config": servers_config,
+        "discovered_containers": [],
+        "service_status_summary": ""
     }
     
     try:
