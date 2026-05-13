@@ -790,34 +790,47 @@ async def collect_data_node(state: DiagnosisState) -> DiagnosisState:
         if mysql_tool:
             print(f"[Collect Data] 检查MySQL数据库状态")
             
-            result = await mysql_tool.ainvoke({})
-            
-            # 解析MCP返回格式
-            if isinstance(result, list) and len(result) > 0:
-                first_item = result[0]
-                if isinstance(first_item, dict) and 'text' in first_item:
-                    mysql_data = json.loads(first_item['text'])
+            try:
+                result = await mysql_tool.ainvoke({})
+                
+                # 解析MCP返回格式
+                if isinstance(result, list) and len(result) > 0:
+                    first_item = result[0]
+                    if isinstance(first_item, dict) and 'text' in first_item:
+                        mysql_data = json.loads(first_item['text'])
+                    else:
+                        mysql_data = first_item
                 else:
-                    mysql_data = first_item
-            else:
-                mysql_data = result
-            
-            if mysql_data.get('status') == 'success':
-                mysql_running = mysql_data.get('mysql_running', False)
-                process_info = mysql_data.get('process_info', '')
-                port_info = mysql_data.get('port_info', '')
-                docker_info = mysql_data.get('docker_info', '')
+                    mysql_data = result
                 
-                print(f"[Collect Data] MySQL 数据库状态:")
-                print(f"  运行状态: {'✓ 运行中' if mysql_running else '✗ 未运行'}")
-                if process_info:
-                    print(f"  进程信息: {process_info}")
-                if port_info:
-                    print(f"  端口监听: {port_info}")
-                if docker_info:
-                    print(f"  Docker 容器: {docker_info}")
-                
-                mysql_status = f"运行状态: {'运行中' if mysql_running else '未运行'}\n进程: {process_info}\n端口: {port_info}\nDocker: {docker_info}"
+                if mysql_data.get('status') == 'success':
+                    mysql_running = mysql_data.get('mysql_running', False)
+                    process_info = mysql_data.get('process_info', '')
+                    port_info = mysql_data.get('port_info', '')
+                    docker_info = mysql_data.get('docker_info', '')
+                    
+                    print(f"[Collect Data] MySQL 数据库状态:")
+                    print(f"  运行状态: {'[OK] 运行中' if mysql_running else '[FAIL] 未运行'}")
+                    if process_info:
+                        print(f"  进程信息: {process_info}")
+                    if port_info:
+                        print(f"  端口监听: {port_info}")
+                    if docker_info:
+                        print(f"  Docker 容器: {docker_info}")
+                    
+                    mysql_status = f"运行状态: {'运行中' if mysql_running else '未运行'}\n进程: {process_info}\n端口: {port_info}\nDocker: {docker_info}"
+                    
+                    return {
+                        **state,
+                        "mysql_status": mysql_status,
+                        "iteration_count": state['iteration_count'] + 1
+                    }
+                else:
+                    print(f"[Collect Data] MySQL检查失败: {mysql_data.get('message', 'Unknown error')}")
+            except Exception as e:
+                print(f"[Collect Data] MySQL检查出错: {str(e)}")
+                import traceback
+                traceback.print_exc()
                 
                 return {
                     **state,
