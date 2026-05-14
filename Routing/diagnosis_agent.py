@@ -1665,7 +1665,7 @@ async def generate_report_node(state: DiagnosisState) -> DiagnosisState:
 关键指标：
 - 内存可用：{memory_available}
 - CPU状态：{'正常' if state.get('cpu_info') else '未收集'}
-- MySQL状态：{'运行中' if state.get('mysql_status') and '运行中: True' in state.get('mysql_status', '') else '未检查或异常'}
+- MySQL状态：{'运行中' if state.get('mysql_status') and ('运行中' in state.get('mysql_status', '') or '[OK]' in state.get('mysql_status', '')) else '未检查或异常'}
 - 服务状态：{state.get('service_status', '未收集')}{log_trace_info}{logs_content}
 """
     
@@ -1743,13 +1743,87 @@ async def generate_report_node(state: DiagnosisState) -> DiagnosisState:
         log_empty_warning += "3. 服务可能已停止或无法访问\n"
         log_empty_warning += "4. 需要检查容器状态和日志配置"
     
+    # === 新增：构建服务状态明确摘要（避免LLM误判）===
+    service_health_summary = "\n\n【服务健康状态摘要】\n"
+    service_health_summary += f"- MySQL: {'✓ 正常运行' if state.get('mysql_status') and ('运行中' in state.get('mysql_status', '') or '[OK]' in state.get('mysql_status', '')) else '✗ 未检查或异常'}\n"
+    
+    # === 新增：构建详细的服务状态信息 ===
+    discovered = state.get('discovered_containers') or []
+    service_status_detail = "\n\n【各服务运行状态】\n"
+    
+    # 按服务类型分组
+    services_by_type = {}
+    for container in discovered:
+        ctype = container.get('type', 'unknown')
+        if ctype not in services_by_type:
+            services_by_type[ctype] = []
+        services_by_type[ctype].append(container)
+    
+    # 前端服务
+    if 'frontend' in services_by_type:
+        frontend_containers = services_by_type['frontend']
+        status_list = [f"{c['name']} ({c.get('status', 'unknown')})" for c in frontend_containers]
+        service_status_detail += f"- 前端: {', '.join(status_list)}\n"
+    else:
+        service_status_detail += "- 前端: 未发现容器\n"
+    
+    # 后端服务
+    if 'backend' in services_by_type:
+        backend_containers = services_by_type['backend']
+        status_list = [f"{c['name']} ({c.get('status', 'unknown')})" for c in backend_containers]
+        service_status_detail += f"- 后端: {', '.join(status_list)}\n"
+    else:
+        service_status_detail += "- 后端: 未发现容器\n"
+    
+    # 数据库服务（显示具体数据库类型）
+    if 'database' in services_by_type:
+        db_containers = services_by_type['database']
+        db_info_list = []
+        for c in db_containers:
+            name = c['name'].lower()
+            # 识别数据库类型
+            if 'mysql' in name or 'mariadb' in name:
+                db_type = 'MySQL'
+            elif 'postgres' in name or 'pgsql' in name:
+                db_type = 'PostgreSQL'
+            elif 'mongo' in name:
+                db_type = 'MongoDB'
+            else:
+                db_type = 'Database'
+            db_info_list.append(f"[{db_type}] {c['name']} ({c.get('status', 'unknown')})")
+        service_status_detail += f"- 数据库: {', '.join(db_info_list)}\n"
+    else:
+        service_status_detail += "- 数据库: 未发现容器\n"
+    
+    # Redis/缓存服务
+    if 'redis' in services_by_type:
+        redis_containers = services_by_type['redis']
+        redis_info_list = []
+        for c in redis_containers:
+            name = c['name'].lower()
+            # 识别缓存类型
+            if 'redis' in name:
+                cache_type = 'Redis'
+            elif 'memcached' in name:
+                cache_type = 'Memcached'
+            else:
+                cache_type = 'Cache'
+            redis_info_list.append(f"[{cache_type}] {c['name']} ({c.get('status', 'unknown')})")
+        service_status_detail += f"- 缓存: {', '.join(redis_info_list)}\n"
+    else:
+        service_status_detail += "- 缓存: 未发现容器\n"
+    
     prompt = f"""你是运维诊断专家。请基于以下实时数据分析问题根因并给出解决方案。
 
 {data_summary}
 
+{service_health_summary}
+
 {container_status_table}
 
 {log_collection_status}
+
+{service_status_detail}
 
 【多服务日志摘要】
 - 后端日志行数: {len(backend_logs.splitlines()) if backend_logs else 0}
@@ -1767,7 +1841,7 @@ async def generate_report_node(state: DiagnosisState) -> DiagnosisState:
    - 判定: 如果容器存在且日志可读取 → 前端服务正常运行；如果容器不存在或无法读取日志 → 确认为问题
 
 2. **MySQL 问题验证**:
-   - 证据1: check_mysql 状态 → {state.get('mysql_status', '未检查')[:100] if state.get('mysql_status') else '未检查'}
+   - 证据1: check_mysql 状态 → {'✓ 正常运行' if state.get('mysql_status') and ('运行中' in state.get('mysql_status', '') or '[OK]' in state.get('mysql_status', '')) else '✗ 未检查或异常'}
    - 证据2: MySQL 日志 → {'有错误' if mysql_logs and any(kw in mysql_logs.lower() for kw in ['error', 'failed']) else '无明显错误'}
    - 证据3: 后端日志中的 MySQL 错误 → {'有连接错误' if backend_logs and 'mysql' in backend_logs.lower() else '无'}
    - 判定: 如果 2/3 证据显示异常 → 确认为当前问题；如果只有后端日志有历史错误但 MySQL 状态正常 → 标记为“已恢复的历史问题”
@@ -1833,6 +1907,12 @@ async def generate_report_node(state: DiagnosisState) -> DiagnosisState:
 2. 建议2
 3. 建议3
 ...
+
+## 服务状态
+前端: [容器名称] (状态)
+后端: [容器名称] (状态)
+数据库: [中间件类型] [容器名称] (状态)  # 例如: [MySQL] mysql (Up 10 minutes)
+缓存: [中间件类型] [容器名称] (状态)  # 例如: [Redis] redis (Up 10 minutes)
 ```
 
 **注意：只输出上述格式的内容，不要有任何其他文字！**
