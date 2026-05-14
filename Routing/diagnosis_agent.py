@@ -79,8 +79,15 @@ llm = ChatOpenAI(
 def load_servers_config(env_file_path: str = ".env") -> dict:
     """从 .env 文件加载服务器配置"""
     from dotenv import dotenv_values
+    import os
     
-    config = dotenv_values(env_file_path)
+    # 强制重新加载配置（清除缓存）
+    config = dotenv_values(env_file_path, encoding='utf-8')
+    
+    # 如果 dotenv_values 返回空，尝试使用 os.environ
+    if not config or len(config) == 0:
+        print(f"[WARNING] dotenv_values 返回空配置，尝试使用 os.environ")
+        config = dict(os.environ)
     
     servers = {
         "frontend": {},
@@ -144,7 +151,12 @@ def get_stopped_services(state: DiagnosisState) -> List[str]:
     """获取未启动的服务列表"""
     required_types = ['frontend', 'backend', 'database', 'redis']
     discovered = state.get('discovered_containers', [])
-    found_types = {c['type'] for c in discovered if c.get('type')}
+    
+    # 只统计正常运行的容器（排除有 issue 标记或 status 为 missing 的）
+    found_types = {
+        c['type'] for c in discovered 
+        if c.get('type') and not c.get('issue') and c.get('status') != 'missing'
+    }
     
     return list(set(required_types) - found_types)
 
@@ -174,12 +186,66 @@ def check_logs_for_service_stop(state: DiagnosisState, stopped_services: List[st
     
     return '\n'.join(evidence_lines[:20])  # 最多返回20条证据
 
-def format_stopped_services(stopped_services: List[str], logs_evidence: str) -> str:
+def format_stopped_services(stopped_services: List[str], logs_evidence: str, discovered_containers: List[dict] = None) -> str:
     """格式化服务未启动的摘要信息"""
     summary = f"检测到以下服务未启动: {', '.join(stopped_services)}\n\n"
+    
+    # 添加深度诊断信息
+    if discovered_containers:
+        issues_found = [c for c in discovered_containers if c.get('issue')]
+        if issues_found:
+            summary += "【深度诊断结果】\n"
+            for issue in issues_found:
+                server = issue.get('server', 'unknown')
+                issue_type = issue.get('issue', '')
+                name = issue.get('name', '')
+                status = issue.get('status', '')
+                details = issue.get('diagnosis_details', '')
+                suggestions = issue.get('suggestions', [])
+                
+                summary += f"- 服务 {name} (服务器 {server}):\n"
+                summary += f"  问题类型: {issue_type}\n"
+                if details:
+                    summary += f"  详情: {details}\n"
+                if suggestions:
+                    summary += f"  建议操作:\n"
+                    for sug in suggestions:
+                        summary += f"    * `{sug}`\n"
+                summary += "\n"
+    
     if logs_evidence:
         summary += f"日志证据:\n{logs_evidence}"
+    
     return summary
+
+def get_container_for_service(service_name: str, state: DiagnosisState) -> Optional[str]:
+    """根据服务名称从已发现的容器中查找对应的容器名"""
+    discovered = state.get('discovered_containers', [])
+    for container in discovered:
+        name = container.get('name', '').lower()
+        if service_name in name:
+            return container.get('container_name') or name
+    return None
+
+def extract_service_logs(all_logs: str, service: str) -> str:
+    """从合并的日志中提取特定服务的日志"""
+    if not all_logs:  # 防止 None 或空字符串
+        return ''
+    marker = f"--- {service.upper()}"
+    if marker in all_logs:
+        parts = all_logs.split(marker)
+        if len(parts) > 1:
+            section = parts[1].split('---')[0]
+            return section.strip()
+    return ''
+
+def get_redis_container_status(state: DiagnosisState) -> str:
+    """从已发现的容器中获取 Redis 状态"""
+    discovered = state.get('discovered_containers', [])
+    for container in discovered:
+        if 'redis' in container.get('name', '').lower():
+            return f"发现容器: {container.get('container_name')}"
+    return "未发现 Redis 容器"
 
 def identify_container_type(name: str, ports: str) -> str:
     """根据容器名称和端口识别容器类型"""
@@ -212,6 +278,254 @@ def identify_container_type(name: str, ports: str) -> str:
     
     return 'unknown'
 
+async def check_missing_service_on_server(ssh_client, target_server: dict, expected_service_type: str, discovered: List[dict]) -> dict:
+    """
+    检查服务器上缺失的预期服务（通用函数，适用于所有服务类型）
+    
+    Args:
+        ssh_client: SSH 客户端连接
+        target_server: 服务器配置
+        expected_service_type: 预期的服务类型 (frontend/backend/database/redis)
+        discovered: 当前已发现的容器列表
+    
+    Returns:
+        诊断结果字典，包含 issue_type, details, suggestions
+    """
+    result = {
+        "issue_type": "unknown",
+        "details": "",
+        "suggestions": [],
+        "missing_containers": []
+    }
+    
+    # 检查该服务器上是否已有其他容器运行
+    server_containers = [c for c in discovered if c.get('server') == target_server['ssh_host']]
+    has_other_containers = len(server_containers) > 0
+    
+    if has_other_containers:
+        print(f"[Discover Containers] 服务器 {target_server['ssh_host']} 上有 {len(server_containers)} 个其他容器运行，但缺少 {expected_service_type} 服务")
+        
+        # 1. 查找 docker-compose 文件
+        stdin, stdout, stderr = ssh_client.exec_command(
+            "find / -name 'docker-compose.yml' -o -name 'docker-compose.yaml' -o -name 'compose.yml' 2>/dev/null | head -5"
+        )
+        compose_files = stdout.read().decode('utf-8').strip()
+        
+        if compose_files:
+            print(f"[Discover Containers] 发现 docker-compose 文件:")
+            for f in compose_files.splitlines():
+                print(f"  - {f}")
+            
+            # 检查第一个 docker-compose 文件中的服务定义
+            first_compose = compose_files.splitlines()[0]
+            compose_dir = '/'.join(first_compose.split('/')[:-1])
+            
+            # 获取 docker-compose 定义的所有服务
+            stdin, stdout, stderr = ssh_client.exec_command(
+                f"cd {compose_dir} && docker-compose config --services 2>/dev/null"
+            )
+            defined_services = stdout.read().decode('utf-8').strip().splitlines()
+            
+            if defined_services:
+                print(f"[Discover Containers] docker-compose 定义的服务: {', '.join(defined_services)}")
+                
+                # 检查是否有与预期服务类型相关的定义
+                # 使用通用的关键词匹配规则，适用于所有服务类型
+                related_services = []
+                for svc in defined_services:
+                    svc_lower = svc.lower()
+                    # 直接匹配服务类型名称
+                    if expected_service_type in svc_lower:
+                        related_services.append(svc)
+                    else:
+                        # 根据服务类型使用特定关键词匹配
+                        keyword_map = {
+                            'frontend': ['vue', 'nginx', 'web', 'ui'],
+                            'backend': ['app', 'java', 'spring', 'api', 'server'],
+                            'database': ['mysql', 'postgres', 'db', 'mariadb'],
+                            'redis': ['redis', 'cache']
+                        }
+                        keywords = keyword_map.get(expected_service_type, [])
+                        if any(kw in svc_lower for kw in keywords):
+                            related_services.append(svc)
+                
+                if related_services:
+                    print(f"[Discover Containers] 发现与 {expected_service_type} 相关的服务定义: {', '.join(related_services)}")
+                    
+                    # 检查这些服务的状态
+                    stdin, stdout, stderr = ssh_client.exec_command(
+                        f"cd {compose_dir} && docker-compose ps --format '{{{{.Name}}}}\\t{{{{.Status}}}}' 2>/dev/null"
+                    )
+                    compose_status = stdout.read().decode('utf-8').strip()
+                    
+                    stopped_related = []
+                    for line in compose_status.splitlines():
+                        parts = line.split('\t')
+                        name = parts[0] if len(parts) > 0 else ''
+                        status = parts[1] if len(parts) > 1 else ''
+                        
+                        # 检查是否是相关服务且已停止
+                        if any(rel_svc in name for rel_svc in related_services):
+                            if 'exit' in status.lower() or 'stopped' in status.lower() or not status:
+                                stopped_related.append({"name": name, "status": status})
+                    
+                    if stopped_related:
+                        result["issue_type"] = "compose_service_stopped"
+                        result["details"] = f"docker-compose 中定义了 {expected_service_type} 相关服务，但已停止"
+                        result["missing_containers"] = stopped_related
+                        result["suggestions"] = [
+                            f"查看日志: cd {compose_dir} && docker-compose logs {' '.join([s['name'] for s in stopped_related])}",
+                            f"重启服务: cd {compose_dir} && docker-compose up -d {' '.join([s['name'] for s in stopped_related])}"
+                        ]
+                        return result
+                    else:
+                        result["issue_type"] = "compose_service_not_running"
+                        result["details"] = f"docker-compose 中定义了 {expected_service_type} 相关服务，但未在运行容器中"
+                        result["suggestions"] = [
+                            f"检查服务状态: cd {compose_dir} && docker-compose ps",
+                            f"启动服务: cd {compose_dir} && docker-compose up -d"
+                        ]
+                        return result
+        
+        # 2. 检查是否有已停止的相关容器
+        stdin, stdout, stderr = ssh_client.exec_command(
+            "docker ps -a --format '{{.Names}}\\t{{.Status}}' | grep -v 'Up'"
+        )
+        all_stopped = stdout.read().decode('utf-8').strip()
+        
+        if all_stopped:
+            stopped_related = []
+            for line in all_stopped.splitlines():
+                parts = line.split('\t')
+                name = parts[0] if len(parts) > 0 else ''
+                status = parts[1] if len(parts) > 1 else ''
+                
+                # 检查是否与预期服务类型相关（使用通用关键词匹配）
+                name_lower = name.lower()
+                keyword_map = {
+                    'frontend': ['frontend', 'vue', 'nginx', 'web', 'ui'],
+                    'backend': ['backend', 'app', 'java', 'spring', 'api', 'server'],
+                    'database': ['mysql', 'postgres', 'db', 'database', 'mariadb'],
+                    'redis': ['redis', 'cache']
+                }
+                keywords = keyword_map.get(expected_service_type, [expected_service_type])
+                is_related = any(kw in name_lower for kw in keywords)
+                
+                if is_related:
+                    stopped_related.append({"name": name, "status": status})
+            
+            if stopped_related:
+                result["issue_type"] = "container_stopped"
+                result["details"] = f"发现已停止的 {expected_service_type} 相关容器"
+                result["missing_containers"] = stopped_related
+                result["suggestions"] = [
+                    f"查看日志: docker logs {' '.join([s['name'] for s in stopped_related])}",
+                    f"重启容器: docker start {' '.join([s['name'] for s in stopped_related])}"
+                ]
+                return result
+        
+        # 3. 未找到相关线索
+        result["issue_type"] = "service_not_found"
+        result["details"] = f"服务器上未发现 {expected_service_type} 相关容器或配置"
+        result["suggestions"] = [
+            f"检查部署脚本是否正确执行",
+            f"确认 {expected_service_type} 服务是否应该在此服务器上运行"
+        ]
+        return result
+    
+    else:
+        # 服务器上完全没有容器
+        print(f"[Discover Containers] 服务器 {target_server['ssh_host']} 上无任何容器运行")
+        
+        # 检查 Docker 是否运行
+        stdin, stdout, stderr = ssh_client.exec_command("systemctl is-active docker 2>/dev/null || service docker status 2>/dev/null")
+        docker_status = stdout.read().decode('utf-8').strip()
+        
+        if 'active' not in docker_status.lower():
+            result["issue_type"] = "docker_not_running"
+            result["details"] = f"Docker 服务未运行: {docker_status}"
+            result["suggestions"] = [
+                "启动 Docker: systemctl start docker",
+                "设置开机自启: systemctl enable docker"
+            ]
+        else:
+            # Docker 正常运行，但没有任何容器 - 检查 docker-compose 文件
+            print(f"[Discover Containers] Docker 正常运行，检查是否有 docker-compose 配置文件...")
+            
+            # 查找 docker-compose 文件
+            stdin, stdout, stderr = ssh_client.exec_command(
+                "find / -maxdepth 4 -name 'docker-compose.yml' -o -name 'docker-compose.yaml' -o -name 'compose.yml' 2>/dev/null | head -5"
+            )
+            compose_files = stdout.read().decode('utf-8').strip()
+            
+            if compose_files:
+                print(f"[Discover Containers] 发现 docker-compose 文件:")
+                compose_file_list = compose_files.splitlines()
+                for f in compose_file_list:
+                    print(f"  - {f}")
+                
+                # 分析第一个 docker-compose 文件中的服务定义
+                first_compose = compose_file_list[0]
+                compose_dir = '/'.join(first_compose.split('/')[:-1])
+                
+                print(f"[Discover Containers] 分析 docker-compose 文件: {first_compose}")
+                
+                # 获取 docker-compose 定义的所有服务
+                stdin, stdout, stderr = ssh_client.exec_command(
+                    f"cd {compose_dir} && docker-compose config --services 2>/dev/null"
+                )
+                defined_services = stdout.read().decode('utf-8').strip().splitlines()
+                
+                if defined_services:
+                    print(f"[Discover Containers] docker-compose 定义的服务: {', '.join(defined_services)}")
+                    
+                    # 检查是否有与预期服务类型相关的定义
+                    related_services = []
+                    for svc in defined_services:
+                        svc_lower = svc.lower()
+                        # 直接匹配服务类型名称
+                        if expected_service_type in svc_lower:
+                            related_services.append(svc)
+                        else:
+                            # 根据服务类型使用特定关键词匹配
+                            keyword_map = {
+                                'frontend': ['vue', 'nginx', 'web', 'ui'],
+                                'backend': ['app', 'java', 'spring', 'api', 'server'],
+                                'database': ['mysql', 'postgres', 'db', 'mariadb'],
+                                'redis': ['redis', 'cache']
+                            }
+                            keywords = keyword_map.get(expected_service_type, [])
+                            if any(kw in svc_lower for kw in keywords):
+                                related_services.append(svc)
+                    
+                    if related_services:
+                        print(f"[Discover Containers] [OK] 找到与 {expected_service_type} 相关的服务定义: {', '.join(related_services)}")
+                        
+                        result["issue_type"] = "compose_services_not_started"
+                        result["details"] = (
+                            f"Docker 正常运行，{compose_dir}/docker-compose.yml 中定义了 {expected_service_type} 相关服务 "
+                            f"({', '.join(related_services)})，但所有容器都已被删除或停止"
+                        )
+                        result["suggestions"] = [
+                            f"查看 docker-compose 配置: cat {first_compose}",
+                            f"启动所有服务: cd {compose_dir} && docker-compose up -d",
+                            f"查看服务日志: cd {compose_dir} && docker-compose logs -f"
+                        ]
+                        return result
+                    else:
+                        print(f"[Discover Containers] [WARN] docker-compose 中未找到与 {expected_service_type} 相关的服务")
+            
+            # 未找到 docker-compose 或没有相关服务
+            result["issue_type"] = "no_containers"
+            result["details"] = "Docker 正常运行，但没有任何容器"
+            result["suggestions"] = [
+                "检查是否有 docker-compose 文件需要启动",
+                "检查容器是否被意外删除",
+                "查看系统日志确认是否有自动清理操作: journalctl -u docker.service --since '1 hour ago'"
+            ]
+        
+        return result
+
 # ===== 节点函数 =====
 
 async def analyze_node(state: DiagnosisState) -> DiagnosisState:
@@ -224,7 +538,7 @@ async def analyze_node(state: DiagnosisState) -> DiagnosisState:
     
     # === 强制检查最大迭代次数 ===
     if state['iteration_count'] >= state['max_iterations']:
-        print(f"[Analyze] ⚠️ 已达到最大迭代次数 ({state['max_iterations']}),强制生成报告")
+        print(f"[Analyze] [WARN] 已达到最大迭代次数 ({state['max_iterations']}),强制生成报告")
         return {
             **state,
             "current_step": "generate_report",
@@ -235,6 +549,21 @@ async def analyze_node(state: DiagnosisState) -> DiagnosisState:
     if state.get('config_status') == 'complete' and has_stopped_services(state):
         stopped_services = get_stopped_services(state)
         logs_data = state.get('logs_data', '')
+        discovered = state.get('discovered_containers') or []
+        
+        # 检查是否有服务完全缺失（容器不存在）
+        missing_containers = [c for c in discovered if c.get('issue') in ['no_containers', 'service_not_found', 'compose_services_not_started']]
+        
+        if missing_containers:
+            # 服务完全缺失，直接生成报告
+            print(f"[Analyze] 检测到 {len(missing_containers)} 个服务完全缺失，直接生成报告")
+            missing_summary = format_stopped_services(stopped_services, '', discovered)
+            return {
+                **state,
+                "current_step": "generate_report",
+                "service_status_summary": missing_summary,
+                "actions_taken": state.get('actions_taken', []) + ["detect_missing_services"]
+            }
         
         # 如果已有日志数据,检查是否有服务停止的证据
         if logs_data:
@@ -245,9 +574,28 @@ async def analyze_node(state: DiagnosisState) -> DiagnosisState:
                 return {
                     **state,
                     "current_step": "generate_report",
-                    "service_status_summary": format_stopped_services(stopped_services, logs_evidence),
+                    "service_status_summary": format_stopped_services(stopped_services, logs_evidence, discovered),
                     "actions_taken": state.get('actions_taken', []) + ["detect_stopped_services"]
                 }
+    
+    # === 新增：可疑容器检查（端口为空或状态异常）===
+    discovered = state.get('discovered_containers') or []  # 防止 None 值
+    suspicious_containers = [c for c in discovered if c.get('issue') == 'suspicious_container']
+    
+    if suspicious_containers:
+        print(f"[Analyze] [WARN] 发现 {len(suspicious_containers)} 个可疑容器，需要进一步诊断")
+        for c in suspicious_containers:
+            print(f"  - {c['name']}: {c.get('diagnosis_details', '')}")
+        
+        # 如果有可疑容器但还没有读取日志，先读取日志
+        if not state.get('logs_data'):
+            print("[Analyze] 决定先读取日志以确认容器状态")
+            return {
+                **state,
+                "current_step": "collect_data",
+                "next_action": "read_logs",
+                "actions_taken": state.get('actions_taken', []) + ["detect_suspicious_containers"]
+            }
     
     # === 新增:配置不足的快速判断 ===
     if state.get('config_status') == 'none':
@@ -292,31 +640,46 @@ async def analyze_node(state: DiagnosisState) -> DiagnosisState:
 3. check_service - 检查服务运行状态（如果还没有执行过）
 4. check_mysql - 检查MySQL数据库状态（如果还没有执行过）
 5. read_logs - 读取或扩大日志追溯范围
-6. generate_report - 生成诊断报告
+6. read_logs_recent - 读取相关服务的最近10分钟日志（用于交叉验证）
+7. generate_report - 生成诊断报告
 
-决策规则：
-1. 如果check_memory未执行 → check_memory
-2. 如果check_memory已执行但check_cpu未执行 → check_cpu
-3. 如果内存和CPU都已检查，但check_service未执行 → check_service
-4. 如果核心资源指标已检查：
+决策规则（按优先级判断）：
+1. **如果检测到服务完全缺失**（discovered_containers 中有 issue='no_containers' 或 'service_not_found' 的容器）→ **直接 generate_report**
+2. 如果check_memory未执行 → check_memory
+3. 如果check_memory已执行但check_cpu未执行 → check_cpu
+4. 如果内存和CPU都已检查，但check_service未执行 → check_service
+5. 如果核心资源指标已检查：
    a. 如果还未读取任何日志 → read_logs (首次读取30分钟)
-   b. 如果已读取日志但范围 < 180分钟，且你认为需要更多信息 → read_logs (扩大范围)
-   c. 如果已有足够信息或达到最大迭代次数 → generate_report
-5. 如果达到最大迭代次数 → generate_report
+   b. 如果已读取后端日志但未读取相关服务日志 → read_logs_recent (读取Redis/MySQL等服务的最近10分钟日志)
+   c. 如果已读取日志但范围 < 180分钟，且你认为需要更多信息 → read_logs (扩大范围)
+   d. 如果已有足够信息或达到最大迭代次数 → generate_report
+6. 如果达到最大迭代次数 → generate_report
 
 重要判断逻辑：
 - **先通过内存/CPU/服务状态进行初步判断**
 - 如果资源状态异常(内存紧张/CPU高/服务异常) → 必须读取日志确认根因
-- 如果已读取日志但未发现明显问题,但告警仍存在 → 考虑扩大追溯范围
+- 如果后端日志显示其他服务错误 → 使用 read_logs_recent 读取相关服务日志进行交叉验证
 - **日志是诊断的核心依据,不可跳过**
+- **优先关注最近10分钟内的日志，历史日志可能是已解决的问题**
+- **如果服务已被确认缺失（容器不存在），不要再尝试检查该服务，直接生成报告**
 
 重要：
 - **严禁重复执行已执行过的行动**
 - 从“已执行的行动”列表中排除已经做过的
+- **如果某个行动已经连续执行超过2次且没有收集到新信息，立即切换到其他行动或生成报告**
 """
     
     response = await llm.ainvoke(prompt)
     next_action = response.content.strip()
+    
+    # === 防护机制：检测重复行动 ===
+    actions_taken = state.get('actions_taken', [])
+    if len(actions_taken) >= 2:
+        # 检查最近3次行动是否都是同一个行动
+        recent_actions = actions_taken[-3:] if len(actions_taken) >= 3 else actions_taken
+        if len(set(recent_actions)) == 1 and recent_actions[0] == next_action:
+            print(f"[Analyze] [WARN] 检测到行动 '{next_action}' 已连续执行 {len(recent_actions)} 次，强制切换到 generate_report")
+            next_action = "generate_report"
     
     print(f"[Analyze] 决定下一步行动: {next_action}")
     
@@ -485,17 +848,31 @@ async def discover_containers_node(state: DiagnosisState) -> DiagnosisState:
                 if len(parts) >= 2:
                     container_name = parts[0].strip()
                     ports = parts[1].strip()
+                    status = parts[2].strip() if len(parts) > 2 else "running"
                     
                     # 识别容器类型
                     container_type = identify_container_type(container_name, ports)
                     
-                    discovered.append({
+                    container_info = {
                         "name": container_name,
                         "ports": ports,
                         "type": container_type,
-                        "status": parts[2].strip() if len(parts) > 2 else "running",
+                        "status": status,
                         "server": target_server['ssh_host']
-                    })
+                    }
+                    
+                    # === 新增：检测可疑容器（端口为空或状态异常）===
+                    if not ports or status.lower() in ['exited', 'dead', 'created']:
+                        print(f"[Discover Containers] [WARN] 发现可疑容器: {container_name} (端口: '{ports}', 状态: {status})")
+                        container_info['issue'] = 'suspicious_container'
+                        container_info['diagnosis_details'] = f"容器状态异常 - 端口: '{ports}', 状态: {status}"
+                        container_info['suggestions'] = [
+                            f"查看容器详细状态: docker inspect {container_name}",
+                            f"查看容器日志: docker logs {container_name} --tail 50",
+                            f"重启容器: docker restart {container_name}"
+                        ]
+                    
+                    discovered.append(container_info)
             
             if discovered:
                 print(f"[Discover Containers] 在 {target_server['ssh_host']} 上发现 {len(discovered)} 个容器:")
@@ -504,6 +881,63 @@ async def discover_containers_node(state: DiagnosisState) -> DiagnosisState:
                 all_discovered.extend(discovered)
             else:
                 print(f"[Discover Containers] 在 {target_server['ssh_host']} 上未发现容器")
+            
+            # === 新增：检查预期服务是否缺失 ===
+            # 确定该服务器预期的服务类型
+            expected_types_for_server = []
+            for svc_type, svc_config in servers_config.items():
+                if svc_config and svc_config.get('ssh_host') == target_server['ssh_host']:
+                    expected_types_for_server.append(svc_type)
+            
+            # 检查是否有预期服务类型未在发现的容器中出现
+            found_types = {c['type'] for c in discovered if c.get('type')}
+            missing_types = [t for t in expected_types_for_server if t not in found_types]
+            
+            if missing_types:
+                print(f"[Discover Containers] [WARN] 服务器 {target_server['ssh_host']} 缺少预期服务: {', '.join(missing_types)}")
+                
+                # 对每个缺失的服务类型进行深度诊断
+                for missing_type in missing_types:
+                    print(f"[Discover Containers] 开始诊断缺失的 {missing_type} 服务...")
+                    try:
+                        diagnosis = await check_missing_service_on_server(ssh_client, target_server, missing_type, all_discovered)
+                        
+                        print(f"[Discover Containers] 诊断结果: {diagnosis['issue_type']}")
+                        print(f"[Discover Containers] 详情: {diagnosis['details']}")
+                        if diagnosis['suggestions']:
+                            print(f"[Discover Containers] 建议操作:")
+                            for sug in diagnosis['suggestions']:
+                                print(f"  - {sug}")
+                        
+                        # 将诊断结果添加到 discovered 列表中（标记为问题容器）
+                        for missing_container in diagnosis.get('missing_containers', []):
+                            problem_container = {
+                                "name": missing_container['name'],
+                                "type": missing_type,
+                                "status": missing_container.get('status', 'missing'),
+                                "server": target_server['ssh_host'],
+                                "ports": "",
+                                "issue": diagnosis['issue_type'],
+                                "diagnosis_details": diagnosis['details'],
+                                "suggestions": diagnosis['suggestions']
+                            }
+                            all_discovered.append(problem_container)
+                        
+                        # 如果没有具体容器信息，创建一个占位符
+                        if not diagnosis.get('missing_containers'):
+                            problem_container = {
+                                "name": f"{missing_type}-service",
+                                "type": missing_type,
+                                "status": "missing",
+                                "server": target_server['ssh_host'],
+                                "ports": "",
+                                "issue": diagnosis['issue_type'],
+                                "diagnosis_details": diagnosis['details'],
+                                "suggestions": diagnosis['suggestions']
+                            }
+                            all_discovered.append(problem_container)
+                    except Exception as e:
+                        print(f"[Discover Containers] 诊断 {missing_type} 服务时出错: {e}")
             
             # 关闭 SSH 连接
             ssh_client.close()
@@ -516,7 +950,22 @@ async def discover_containers_node(state: DiagnosisState) -> DiagnosisState:
     print(f"\n[Discover Containers] Docker 容器发现结束，一共发现了 {len(all_discovered)} 个容器:")
     if all_discovered:
         for c in all_discovered:
-            print(f"  - {c['name']} ({c['type']}): {c['ports']} [服务器: {c['server']}]")
+            name = c['name']
+            ctype = c['type']
+            ports = c['ports']
+            server = c['server']
+            issue = c.get('issue', '')
+            
+            # 如果是占位符容器（有 issue 标记），显示特殊标识
+            if issue:
+                status_marker = "[MISSING]"
+                print(f"  - {name} ({ctype}): {ports} [服务器: {server}] {status_marker}")
+                # 显示诊断详情
+                details = c.get('diagnosis_details', '')
+                if details:
+                    print(f"    → {details}")
+            else:
+                print(f"  - {name} ({ctype}): {ports} [服务器: {server}]")
     else:
         print("  (无)")
     
@@ -661,6 +1110,83 @@ async def collect_data_node(state: DiagnosisState) -> DiagnosisState:
                 line_count = log_data.get('line_count', 0)
                 print(f"[Collect Data] 读取到 {line_count} 行日志")
                 
+                # === 新增：当日志为空时的处理策略 ===
+                if line_count == 0:
+                    print(f"[Collect Data] [WARN] 警告: 最近{new_range}分钟没有日志记录")
+                    
+                    # 检查是否有可疑容器
+                    discovered = state.get('discovered_containers', [])
+                    suspicious = [c for c in discovered if c.get('issue') == 'suspicious_container']
+                    
+                    if suspicious and new_range < 120:
+                        # 如果有可疑容器，扩大时间范围继续尝试
+                        print(f"[Collect Data] 发现可疑容器，扩大时间范围至 120 分钟重新读取")
+                        return {
+                            **state,
+                            "log_search_range_minutes": 120,  # 直接跳到 120 分钟
+                            "iteration_count": state['iteration_count'] + 1,
+                            "next_action": "read_logs"  # 标记下次行动
+                        }
+                    elif not state.get('logs_collected_ranges'):
+                        # 首次读取且无日志，尝试读取其他服务日志
+                        print(f"[Collect Data] 后端无日志，尝试读取其他服务日志...")
+                        services_to_read = []
+                        for container in discovered:
+                            if container.get('type') in ['frontend', 'redis', 'database']:
+                                services_to_read.append(container)
+                        
+                        if services_to_read:
+                            combined_logs = ""
+                            existing_ranges = state.get('logs_collected_ranges', [])
+                            
+                            for svc_container in services_to_read:
+                                svc_name = svc_container.get('name', '')
+                                svc_type = svc_container.get('type', '')
+                                print(f"[Collect Data] 读取 {svc_type} 服务日志 (容器: {svc_name})")
+                                
+                                try:
+                                    svc_result = await read_tool.ainvoke({
+                                        "container_name": svc_name,
+                                        "since_time": since,
+                                        "until_time": until,
+                                        "lines": 200,
+                                        "log_level": None
+                                    })
+                                    
+                                    # 解析结果
+                                    if isinstance(svc_result, list) and len(svc_result) > 0:
+                                        first_item = svc_result[0]
+                                        if isinstance(first_item, dict) and 'text' in first_item:
+                                            svc_log_data = json.loads(first_item['text'])
+                                        else:
+                                            svc_log_data = first_item
+                                    else:
+                                        svc_log_data = svc_result
+                                    
+                                    if svc_log_data.get('status') == 'success':
+                                        svc_logs = svc_log_data.get('logs', '')
+                                        svc_line_count = svc_log_data.get('line_count', 0)
+                                        if svc_logs:
+                                            combined_logs += f"\n\n--- {svc_type.upper()} 服务日志 ({svc_name}, 最近{new_range}分钟, {svc_line_count}行) ---\n{svc_logs}"
+                                            print(f"[Collect Data] {svc_type} 服务日志: {svc_line_count} 行")
+                                except Exception as e:
+                                    print(f"[Collect Data] 读取 {svc_type} 服务日志失败: {e}")
+                            
+                            if combined_logs:
+                                existing_ranges.append({
+                                    "range_minutes": new_range,
+                                    "line_count": len(combined_logs.splitlines()),
+                                    "timestamp": datetime.now().isoformat()
+                                })
+                                
+                                return {
+                                    **state,
+                                    "logs_data": combined_logs,
+                                    "log_search_range_minutes": new_range,
+                                    "logs_collected_ranges": existing_ranges,
+                                    "iteration_count": state['iteration_count'] + 1
+                                }
+                
                 # 累积合并日志
                 existing_ranges = state.get('logs_collected_ranges', [])
                 existing_logs = state.get('logs_data', '')
@@ -681,6 +1207,51 @@ async def collect_data_node(state: DiagnosisState) -> DiagnosisState:
                 print(f"[Collect Data] 累积日志总数: {len(combined_logs.splitlines())} 行")
                 print(f"[Collect Data] 已收集范围: {[r['range_minutes'] for r in existing_ranges]}")
                 
+                # === 智能多服务日志收集 ===
+                # 检查后端日志中是否包含其他服务的错误关键词
+                services_to_check = []
+                if any(kw in new_logs.lower() for kw in ['redis', '6379']):
+                    services_to_check.append('redis')
+                if any(kw in new_logs.lower() for kw in ['mysql', 'database', '3306']):
+                    services_to_check.append('mysql')
+                
+                # 读取相关服务日志（最近10分钟）
+                if services_to_check:
+                    print(f"[Collect Data] 检测到后端日志中包含其他服务错误，开始读取相关服务日志...")
+                    for service in services_to_check:
+                        container_name = get_container_for_service(service, state)
+                        if container_name:
+                            print(f"[Collect Data] 读取 {service} 服务日志 (容器: {container_name})")
+                            try:
+                                # 读取该服务最近 10 分钟日志
+                                service_since = (now - timedelta(minutes=10)).strftime("%Y-%m-%dT%H:%M:%S")
+                                service_result = await read_tool.ainvoke({
+                                    "container_name": container_name,
+                                    "since_time": service_since,
+                                    "until_time": until,
+                                    "lines": 200,
+                                    "log_level": None
+                                })
+                                
+                                # 解析结果
+                                if isinstance(service_result, list) and len(service_result) > 0:
+                                    first_item = service_result[0]
+                                    if isinstance(first_item, dict) and 'text' in first_item:
+                                        service_log_data = json.loads(first_item['text'])
+                                    else:
+                                        service_log_data = first_item
+                                else:
+                                    service_log_data = service_result
+                                
+                                if service_log_data.get('status') == 'success':
+                                    service_logs = service_log_data.get('logs', '')
+                                    service_line_count = service_log_data.get('line_count', 0)
+                                    if service_logs:
+                                        combined_logs += f"\n\n--- {service.upper()} 服务日志 (最近10分钟, {service_line_count}行) ---\n{service_logs}"
+                                        print(f"[Collect Data] {service} 服务日志: {service_line_count} 行")
+                            except Exception as e:
+                                print(f"[Collect Data] 读取 {service} 服务日志失败: {e}")
+                
                 return {
                     **state,
                     "logs_data": combined_logs,
@@ -688,6 +1259,67 @@ async def collect_data_node(state: DiagnosisState) -> DiagnosisState:
                     "logs_collected_ranges": existing_ranges,
                     "iteration_count": state['iteration_count'] + 1
                 }
+    
+    elif action == "read_logs_recent":
+        # 读取相关服务的最近10分钟日志用于交叉验证
+        log_tools = await tool_cache.get_tools("log-reader")
+        read_tool = next((t for t in log_tools if t.name == "read_docker_logs"), None)
+        
+        if read_tool:
+            print(f"[Collect Data] 读取相关服务的最近10分钟日志进行交叉验证")
+            
+            # 确定需要读取的服务
+            services_to_read = []
+            discovered = state.get('discovered_containers', [])
+            for container in discovered:
+                name = container.get('name', '').lower()
+                if 'redis' in name:
+                    services_to_read.append(('redis', container.get('container_name') or name))
+                elif 'mysql' in name:
+                    services_to_read.append(('mysql', container.get('container_name') or name))
+            
+            now = datetime.now()
+            since = (now - timedelta(minutes=10)).strftime("%Y-%m-%dT%H:%M:%S")
+            until = now.strftime("%Y-%m-%dT%H:%M:%S")
+            
+            combined_logs = state.get('logs_data', '')
+            
+            # 依次读取各服务日志
+            for service_name, container_name in services_to_read:
+                print(f"[Collect Data] 读取 {service_name} 服务日志 (容器: {container_name})")
+                try:
+                    result = await read_tool.ainvoke({
+                        "container_name": container_name,
+                        "since_time": since,
+                        "until_time": until,
+                        "lines": 200,
+                        "log_level": None
+                    })
+                    
+                    # 解析结果
+                    if isinstance(result, list) and len(result) > 0:
+                        first_item = result[0]
+                        if isinstance(first_item, dict) and 'text' in first_item:
+                            log_data = json.loads(first_item['text'])
+                        else:
+                            log_data = first_item
+                    else:
+                        log_data = result
+                    
+                    if log_data.get('status') == 'success':
+                        service_logs = log_data.get('logs', '')
+                        line_count = log_data.get('line_count', 0)
+                        if service_logs:
+                            combined_logs += f"\n\n--- {service_name.upper()} 服务日志 (最近10分钟, {line_count}行) ---\n{service_logs}"
+                            print(f"[Collect Data] {service_name} 服务日志: {line_count} 行")
+                except Exception as e:
+                    print(f"[Collect Data] 读取 {service_name} 服务日志失败: {e}")
+            
+            return {
+                **state,
+                "logs_data": combined_logs,
+                "iteration_count": state['iteration_count'] + 1
+            }
     
     elif action == "check_memory":
         # 检查内存使用情况
@@ -758,27 +1390,36 @@ async def collect_data_node(state: DiagnosisState) -> DiagnosisState:
         if status_tool:
             print(f"[Collect Data] 检查服务状态")
             
-            result = await status_tool.ainvoke({"container_name": state['container_name']})
-            
-            # 解析MCP返回格式
-            if isinstance(result, list) and len(result) > 0:
-                first_item = result[0]
-                if isinstance(first_item, dict) and 'text' in first_item:
-                    status_data = json.loads(first_item['text'])
-                else:
-                    status_data = first_item
-            else:
-                status_data = result
-            
-            if status_data.get('status') == 'success':
-                container_name = state['container_name']
-                service_status = f"运行中: {status_data.get('running')}, 详情: {status_data.get('status_detail')}"
-                print(f"[Collect Data] 服务状态 [{container_name}]:")
-                print(f"  {service_status}")
+            try:
+                result = await status_tool.ainvoke({"container_name": state['container_name']})
                 
+                # 解析MCP返回格式
+                if isinstance(result, list) and len(result) > 0:
+                    first_item = result[0]
+                    if isinstance(first_item, dict) and 'text' in first_item:
+                        status_data = json.loads(first_item['text'])
+                    else:
+                        status_data = first_item
+                else:
+                    status_data = result
+                
+                if status_data.get('status') == 'success':
+                    container_name = state['container_name']
+                    service_status = f"运行中: {status_data.get('running')}, 详情: {status_data.get('status_detail')}"
+                    print(f"[Collect Data] 服务状态 [{container_name}]:")
+                    print(f"  {service_status}")
+                    
+                    return {
+                        **state,
+                        "service_status": service_status,
+                        "iteration_count": state['iteration_count'] + 1
+                    }
+            except Exception as e:
+                print(f"[Collect Data] 检查服务状态失败: {e}")
+                # 即使失败也返回完整状态，防止丢失 discovered_containers
                 return {
                     **state,
-                    "service_status": service_status,
+                    "service_status": f"检查失败: {str(e)}",
                     "iteration_count": state['iteration_count'] + 1
                 }
     
@@ -912,6 +1553,11 @@ async def generate_report_node(state: DiagnosisState) -> DiagnosisState:
     print(f"[Generate Report] 生成最终诊断报告")
     print(f"{'='*70}")
     
+    # === 调试：打印状态信息 ===
+    print(f"[Generate Report] state keys: {list(state.keys())}")
+    print(f"[Generate Report] discovered_containers type: {type(state.get('discovered_containers'))}")
+    print(f"[Generate Report] discovered_containers value: {state.get('discovered_containers')}")
+    
     # === 新增:服务未启动的快速报告 ===
     service_status_summary = state.get('service_status_summary', '')
     if service_status_summary:
@@ -985,7 +1631,7 @@ async def generate_report_node(state: DiagnosisState) -> DiagnosisState:
         log_trace_info = f"\n日志追溯: 共{len(log_ranges)}次读取, 范围[{ranges_str}], 总计{total_lines}行"
         
         # 添加日志内容给LLM分析
-        logs_data = state.get('logs_data', '')
+        logs_data = state.get('logs_data') or ''  # 防止 None 值
         if logs_data:
             log_lines = logs_data.splitlines()
             if len(log_lines) <= 500:
@@ -1023,9 +1669,127 @@ async def generate_report_node(state: DiagnosisState) -> DiagnosisState:
 - 服务状态：{state.get('service_status', '未收集')}{log_trace_info}{logs_content}
 """
     
+    # === 新增：从合并的日志中提取各服务日志 ===
+    logs_data = state.get('logs_data', '')
+    backend_logs = extract_service_logs(logs_data, 'backend')
+    redis_logs = extract_service_logs(logs_data, 'redis')
+    mysql_logs = extract_service_logs(logs_data, 'mysql')
+    frontend_logs = extract_service_logs(logs_data, 'frontend')
+    
+    # === 新增：检查可疑容器和日志空值情况 ===
+    discovered = state.get('discovered_containers') or []  # 防止 None 值
+    suspicious_containers = [c for c in discovered if c.get('issue') == 'suspicious_container']
+    log_line_count = len(logs_data.splitlines()) if logs_data else 0
+    
+    # === 新增：构建容器状态表格 ===
+    container_status_table = "\n\n【容器发现状态】\n"
+    container_status_table += "| 容器名称 | 类型 | 端口 | 状态 |\n"
+    container_status_table += "|---------|------|------|------|\n"
+    try:
+        for c in discovered:
+            name = c.get('name', 'N/A')
+            ctype = c.get('type', 'unknown')
+            ports = c.get('ports', 'N/A') or 'N/A'
+            status = c.get('status', 'running')
+            has_issue = '[ABNORMAL]' if c.get('issue') else '[OK]'
+            container_status_table += f"| {name} | {ctype} | {ports} | {has_issue} |\n"
+    except Exception as e:
+        print(f"[Generate Report] [WARN] 构建容器状态表格失败: {e}")
+        import traceback
+        traceback.print_exc()
+    
+    # === 新增：日志收集状态 ===
+    log_collection_status = "\n\n【日志收集状态】\n"
+    log_collection_status += f"- 后端日志: {len(backend_logs.splitlines()) if backend_logs else 0} 行\n"
+    log_collection_status += f"- 前端日志: {len(frontend_logs.splitlines()) if frontend_logs else 0} 行\n"
+    log_collection_status += f"- Redis日志: {len(redis_logs.splitlines()) if redis_logs else 0} 行\n"
+    log_collection_status += f"- MySQL日志: {len(mysql_logs.splitlines()) if mysql_logs else 0} 行\n"
+    
+    # 重要提示：如果成功读取到某服务的日志，说明该服务容器一定存在且可访问
+    running_services_evidence = "\n[OK] **关键证据 - 运行中的服务**:\n"
+    evidence_count = 0
+    if frontend_logs:
+        running_services_evidence += f"- ruoyi-frontend: 成功读取 {len(frontend_logs.splitlines())} 行日志 → **容器正在运行且可访问**\n"
+        evidence_count += 1
+    if redis_logs:
+        running_services_evidence += f"- redis: 成功读取 {len(redis_logs.splitlines())} 行日志 → **容器正在运行**\n"
+        evidence_count += 1
+    if mysql_logs:
+        running_services_evidence += f"- mysql: 成功读取 {len(mysql_logs.splitlines())} 行日志 → **容器正在运行**\n"
+        evidence_count += 1
+    if backend_logs:
+        running_services_evidence += f"- ruoyi-app: 成功读取 {len(backend_logs.splitlines())} 行日志 → **容器正在运行**\n"
+        evidence_count += 1
+    
+    if evidence_count > 0:
+        log_collection_status += running_services_evidence
+        log_collection_status += "\n[IMPORTANT] 上述服务已通过日志读取验证为正常运行状态，诊断时应排除这些服务的'容器不存在'问题\n"
+    
+    container_status_info = ""
+    if suspicious_containers:
+        container_status_info = "\n\n【可疑容器状态】\n"
+        for c in suspicious_containers:
+            container_status_info += f"- {c['name']} ({c.get('type', 'unknown')}): {c.get('diagnosis_details', '')}\n"
+            if c.get('suggestions'):
+                container_status_info += "  建议操作:\n"
+                for sug in c['suggestions']:
+                    container_status_info += f"    * `{sug}`\n"
+    
+    log_empty_warning = ""
+    if log_line_count == 0:
+        log_empty_warning = "\n\n[WARN] **重要提示**: 所有服务的日志均为空，这可能表明：\n"
+        log_empty_warning += "1. 服务正常运行但没有产生错误日志\n"
+        log_empty_warning += "2. 日志级别设置过高，错误未被记录\n"
+        log_empty_warning += "3. 服务可能已停止或无法访问\n"
+        log_empty_warning += "4. 需要检查容器状态和日志配置"
+    
     prompt = f"""你是运维诊断专家。请基于以下实时数据分析问题根因并给出解决方案。
 
 {data_summary}
+
+{container_status_table}
+
+{log_collection_status}
+
+【多服务日志摘要】
+- 后端日志行数: {len(backend_logs.splitlines()) if backend_logs else 0}
+- 前端日志行数: {len(frontend_logs.splitlines()) if frontend_logs else 0}
+- Redis日志行数: {len(redis_logs.splitlines()) if redis_logs else 0}
+- MySQL日志行数: {len(mysql_logs.splitlines()) if mysql_logs else 0}{container_status_info}{log_empty_warning}
+
+【交叉验证指南】
+请对每个潜在问题进行多维度验证（至少2个证据源一致才确认为当前问题）：
+
+1. **前端服务问题验证**:
+   - 证据1: 容器发现状态 → {('ruoyi-frontend' in container_status_table and '✓ 正常' in container_status_table) if 'ruoyi-frontend' in container_status_table else '未找到'}
+   - 证据2: 前端日志是否成功读取 → {'是，{len(frontend_logs.splitlines())}行' if frontend_logs else '否'}
+   - 证据3: 前端端口是否正常映射 → {any(c.get('ports') and '80' in c.get('ports', '') for c in discovered if c.get('type') == 'frontend')}
+   - 判定: 如果容器存在且日志可读取 → 前端服务正常运行；如果容器不存在或无法读取日志 → 确认为问题
+
+2. **MySQL 问题验证**:
+   - 证据1: check_mysql 状态 → {state.get('mysql_status', '未检查')[:100] if state.get('mysql_status') else '未检查'}
+   - 证据2: MySQL 日志 → {'有错误' if mysql_logs and any(kw in mysql_logs.lower() for kw in ['error', 'failed']) else '无明显错误'}
+   - 证据3: 后端日志中的 MySQL 错误 → {'有连接错误' if backend_logs and 'mysql' in backend_logs.lower() else '无'}
+   - 判定: 如果 2/3 证据显示异常 → 确认为当前问题；如果只有后端日志有历史错误但 MySQL 状态正常 → 标记为“已恢复的历史问题”
+
+3. **Redis 问题验证**:
+   - 证据1: Discover Container 状态 → {get_redis_container_status(state)}
+   - 证据2: Redis 日志 → {'有错误' if redis_logs and any(kw in redis_logs.lower() for kw in ['error', 'failed']) else '无明显错误'}
+   - 证据3: 后端日志中的 Redis 错误 → {'有连接错误' if backend_logs and 'redis' in backend_logs.lower() else '无'}
+   - 判定: 同上
+
+4. **内存/CPU 问题验证**:
+   - 证据1: check_memory/check_cpu 状态
+   - 证据2: 应用日志中的 OOM/性能错误
+   - 判定: 两者都异常才确认
+
+【时间维度判断】
+- **优先关注最近10分钟内的日志**：这些反映当前问题
+- **10-30分钟的日志**：可能是问题的起因或早期迹象
+- **30分钟以上的日志**：很可能是已解决的历史问题
+
+如果某问题只在历史日志中出现，但当前服务状态正常 → 标记为“已恢复的历史问题”，优先级低
+如果某问题在最近日志中持续出现，且服务状态异常 → 标记为“当前活跃问题”，优先级高
 
 【重要要求】
 1. 严格基于上述真实数据，不要编造信息
@@ -1040,11 +1804,24 @@ async def generate_report_node(state: DiagnosisState) -> DiagnosisState:
 5. **只输出Markdown格式的诊断报告，不要添加任何额外的解释、总结或说明文字**
 6. **不要在```markdown代码块之外添加任何内容**
 7. 输出必须简洁明了，避免重复
+8. **关键证据优先级规则**:
+   - 如果【关键证据 - 运行中的服务】显示某服务成功读取了日志 → 该服务容器一定存在且可访问
+   - 即使在其他地方看到"No such container"等错误信息，也应优先相信日志读取成功的证据
+   - 例如：如果前端日志成功读取了1行，就绝对不能说"ruoyi-frontend 容器不存在"
+9. **交叉验证原则**: 当不同证据源矛盾时，按以下优先级判断:
+   - 最高优先级: 实际日志读取结果（能读到日志 = 容器存在）
+   - 次高优先级: 容器发现阶段的 docker ps 结果
+   - 较低优先级: 工具调用过程中的临时错误信息
 
 【输出格式示例】
 ```markdown
 ## 问题根因
-（语言精炼,引用具体数据和日志中的关键信息,不限字数）
+（只列出经过交叉验证确认的当前活跃问题，语言精炼,引用具体数据和日志中的关键信息）
+- 如果有可疑容器（端口为空或状态异常），必须在问题根因中明确指出
+- 如果日志为空，需要分析可能的原因并给出检查建议
+
+## 已恢复的历史问题
+（列出只在历史日志中出现但当前已正常的问题，如果没有则省略此节）
 
 ## 立即执行
 1. `命令1` - 作用说明
@@ -1218,7 +1995,14 @@ async def run_diagnosis(
             }
         }
     except Exception as e:
+        import traceback
+        error_traceback = traceback.format_exc()
+        print(f"\n{'='*70}")
+        print(f"[ERROR] 诊断失败 - 详细错误信息:")
+        print(f"{'='*70}")
+        print(error_traceback)
         return {
             "status": "error",
-            "message": str(e)
+            "message": str(e),
+            "traceback": error_traceback
         }
