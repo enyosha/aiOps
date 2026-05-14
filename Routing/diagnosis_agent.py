@@ -1831,6 +1831,15 @@ async def generate_report_node(state: DiagnosisState) -> DiagnosisState:
 - Redis日志行数: {len(redis_logs.splitlines()) if redis_logs else 0}
 - MySQL日志行数: {len(mysql_logs.splitlines()) if mysql_logs else 0}{container_status_info}{log_empty_warning}
 
+【应用启动状态分析】
+- 后端容器状态: {next((c.get('status', 'unknown') for c in discovered if c.get('type') == 'backend'), '未找到')}
+- 是否包含启动成功标志: {'是' if backend_logs and ('启动成功' in backend_logs or 'Started' in backend_logs or '若依启动成功' in backend_logs) else '否'}
+- 是否有正常业务日志: {'是' if backend_logs and ('登录成功' in backend_logs or 'Success' in backend_logs or 'exec-' in backend_logs) else '否'}
+
+**重要提示**：
+- 如果“是否包含启动成功标志”为“是”，且“是否有正常业务日志”为“是”，说明应用已经成功启动并正常运行
+- 在这种情况下，即使日志中有历史错误（如启动时的 "Too many connections"），也应该标记为“已恢复的历史问题”，而不是“当前活跃问题”
+
 【交叉验证指南】
 请对每个潜在问题进行多维度验证（至少2个证据源一致才确认为当前问题）：
 
@@ -1862,8 +1871,16 @@ async def generate_report_node(state: DiagnosisState) -> DiagnosisState:
 - **10-30分钟的日志**：可能是问题的起因或早期迹象
 - **30分钟以上的日志**：很可能是已解决的历史问题
 
-如果某问题只在历史日志中出现，但当前服务状态正常 → 标记为“已恢复的历史问题”，优先级低
-如果某问题在最近日志中持续出现，且服务状态异常 → 标记为“当前活跃问题”，优先级高
+**关键判断规则**：
+1. 如果错误发生在应用启动阶段，但应用最终启动成功 → 标记为“已恢复的历史问题”
+2. 如果服务当前状态正常（容器运行中、端口可访问）→ 即使有历史错误，也标记为“已恢复”
+3. 如果最近10分钟内没有相同错误，且服务正常运行 → 标记为“已恢复的历史问题”
+4. 只有当错误持续出现且服务状态异常时，才标记为“当前活跃问题”
+
+**示例**：
+- 场景1: 启动时出现 "Too many connections"，但应用最终启动成功且有正常业务日志 → 已恢复的历史问题
+- 场景2: 最近10分钟内持续出现 "Too many connections"，且应用无法响应 → 当前活跃问题
+- 场景3: MySQL 容器状态为 healthy，后端日志中有历史连接错误但最近无错误 → 已恢复的历史问题
 
 【重要要求】
 1. 严格基于上述真实数据，不要编造信息
