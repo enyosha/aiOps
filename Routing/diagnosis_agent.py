@@ -1752,7 +1752,7 @@ async def generate_report_node(state: DiagnosisState) -> DiagnosisState:
     service_status_detail = "\n\n【各服务运行状态】\n"
     
     # === 新增：获取 docker stats 信息 ===
-    docker_stats_info = "\n\n【容器资源使用情况】\n"
+    docker_stats_info = ""
     servers_config = state.get('servers_config', {})
     
     # 按服务器分组容器
@@ -1774,6 +1774,7 @@ async def generate_report_node(state: DiagnosisState) -> DiagnosisState:
                 break
         
         if not ssh_config:
+            print(f"[Generate Report] [WARN] 未找到服务器 {server_ip} 的 SSH 配置")
             continue
         
         try:
@@ -1800,18 +1801,25 @@ async def generate_report_node(state: DiagnosisState) -> DiagnosisState:
             
             # 执行 docker stats 命令（只取一次快照，不持续监控）
             stdin, stdout, stderr = ssh_client.exec_command(
-                "docker stats --no-stream --format 'table {{.ContainerID}}\t{{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}\t{{.MemPerc}}\t{{.NetIO}}\t{{.BlockIO}}\t{{.PIDs}}'"
+                "docker stats --no-stream --format 'table {{.ID}}\t{{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}\t{{.MemPerc}}\t{{.NetIO}}\t{{.BlockIO}}\t{{.PIDs}}'"
             )
             stats_output = stdout.read().decode('utf-8').strip()
+            error_output = stderr.read().decode('utf-8').strip()
+            
+            if error_output:
+                print(f"[Generate Report] [WARN] docker stats 错误: {error_output}")
             
             if stats_output:
-                docker_stats_info += f"\n服务器 {server_ip}:\n"
-                docker_stats_info += stats_output + "\n"
+                docker_stats_info += f"\n服务器 {server_ip}:\n{stats_output}\n"
+                print(f"[Generate Report] 成功获取服务器 {server_ip} 的 docker stats")
+            else:
+                print(f"[Generate Report] [WARN] 服务器 {server_ip} 的 docker stats 为空")
             
             ssh_client.close()
         except Exception as e:
             print(f"[Generate Report] [WARN] 获取服务器 {server_ip} 的 docker stats 失败: {e}")
-            docker_stats_info += f"\n服务器 {server_ip}: 无法获取资源使用情况\n"
+            import traceback
+            traceback.print_exc()
     
     # 按服务类型分组
     services_by_type = {}
@@ -1968,18 +1976,16 @@ async def generate_report_node(state: DiagnosisState) -> DiagnosisState:
    - 次高优先级: 容器发现阶段的 docker ps 结果
    - 较低优先级: 工具调用过程中的临时错误信息
 
-【输出格式示例】
+【输出格式要求】
+请严格按照以下 Markdown 格式输出诊断报告，不要添加任何额外说明或示例文字：
+
 ```markdown
 ## 问题根因
-（只列出经过交叉验证确认的**当前活跃问题**，语言精炼,引用具体数据和日志中的关键信息）
-- **重要规则**：如果所有问题都已恢复，系统正常运行，应该写“系统未发现错误”，并提供证据支撑
-- 例如：“系统未发现错误。从历史日志来看曾发生 Too many connections 错误，但应用已重启成功，各项配置均正常运行。证据：后端容器 Up 30分钟、MySQL healthy、有正常业务日志。”
-- 如果有可疑容器（端口为空或状态异常），必须在问题根因中明确指出
-- 如果日志为空，需要分析可能的原因并给出检查建议
+（如果系统正常，写："系统未发现错误。从历史日志来看曾发生 XXX 错误，但应用已重启成功，各项配置均正常运行。证据：XXX"）
+（如果有当前活跃问题，列出具体问题）
 
 ## 已恢复的历史问题
-（列出只在历史日志中出现但当前已正常的问题，如果没有则省略此节）
-- 例如：启动时出现 "Too many connections" 错误，但应用最终启动成功并有正常业务日志
+（列出历史问题，如果没有则省略此节）
 
 ## 立即执行
 1. `命令1` - 作用说明
@@ -1994,16 +2000,14 @@ async def generate_report_node(state: DiagnosisState) -> DiagnosisState:
 
 ## 服务状态
 前端: [容器名称] (状态)
-  CONTAINER ID   NAME        CPU %     MEM USAGE / LIMIT     MEM %     NET I/O           BLOCK I/O        PIDS
 后端: [容器名称] (状态)
-  [docker stats 输出]
 数据库: [中间件类型] [容器名称] (状态)
-  [docker stats 输出]
 缓存: [中间件类型] [容器名称] (状态)
-  [docker stats 输出]
+
+**重要**：在“服务状态”章节中，必须包含下面提供的【容器资源使用情况】数据，完整展示每个服务器的 docker stats 表格。
 ```
 
-**注意：只输出上述格式的内容，不要有任何其他文字！**
+**重要：只输出上述 Markdown 内容，不要输出任何其他文字、说明或示例！**
 """
     
     response = await llm.ainvoke(prompt)
