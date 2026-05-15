@@ -1751,6 +1751,68 @@ async def generate_report_node(state: DiagnosisState) -> DiagnosisState:
     discovered = state.get('discovered_containers') or []
     service_status_detail = "\n\n【各服务运行状态】\n"
     
+    # === 新增：获取 docker stats 信息 ===
+    docker_stats_info = "\n\n【容器资源使用情况】\n"
+    servers_config = state.get('servers_config', {})
+    
+    # 按服务器分组容器
+    containers_by_server = {}
+    for container in discovered:
+        server = container.get('server', 'unknown')
+        if server not in containers_by_server:
+            containers_by_server[server] = []
+        containers_by_server[server].append(container)
+    
+    # 对每个服务器执行 docker stats
+    import paramiko
+    for server_ip, containers in containers_by_server.items():
+        # 查找该服务器的 SSH 配置
+        ssh_config = None
+        for svc_type, svc_config in servers_config.items():
+            if svc_config and svc_config.get('ssh_host') == server_ip:
+                ssh_config = svc_config
+                break
+        
+        if not ssh_config:
+            continue
+        
+        try:
+            # 建立 SSH 连接
+            ssh_client = paramiko.SSHClient()
+            ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+            
+            key_path = ssh_config.get('ssh_key_path', '')
+            if key_path:
+                key = paramiko.RSAKey.from_private_key_file(key_path)
+                ssh_client.connect(
+                    hostname=server_ip,
+                    username=ssh_config.get('ssh_user', 'root'),
+                    pkey=key,
+                    timeout=10
+                )
+            else:
+                ssh_client.connect(
+                    hostname=server_ip,
+                    username=ssh_config.get('ssh_user', 'root'),
+                    password=ssh_config.get('ssh_password', ''),
+                    timeout=10
+                )
+            
+            # 执行 docker stats 命令（只取一次快照，不持续监控）
+            stdin, stdout, stderr = ssh_client.exec_command(
+                "docker stats --no-stream --format 'table {{.ContainerID}}\t{{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}\t{{.MemPerc}}\t{{.NetIO}}\t{{.BlockIO}}\t{{.PIDs}}'"
+            )
+            stats_output = stdout.read().decode('utf-8').strip()
+            
+            if stats_output:
+                docker_stats_info += f"\n服务器 {server_ip}:\n"
+                docker_stats_info += stats_output + "\n"
+            
+            ssh_client.close()
+        except Exception as e:
+            print(f"[Generate Report] [WARN] 获取服务器 {server_ip} 的 docker stats 失败: {e}")
+            docker_stats_info += f"\n服务器 {server_ip}: 无法获取资源使用情况\n"
+    
     # 按服务类型分组
     services_by_type = {}
     for container in discovered:
@@ -1824,6 +1886,8 @@ async def generate_report_node(state: DiagnosisState) -> DiagnosisState:
 {log_collection_status}
 
 {service_status_detail}
+
+{docker_stats_info}
 
 【多服务日志摘要】
 - 后端日志行数: {len(backend_logs.splitlines()) if backend_logs else 0}
@@ -1907,12 +1971,15 @@ async def generate_report_node(state: DiagnosisState) -> DiagnosisState:
 【输出格式示例】
 ```markdown
 ## 问题根因
-（只列出经过交叉验证确认的当前活跃问题，语言精炼,引用具体数据和日志中的关键信息）
+（只列出经过交叉验证确认的**当前活跃问题**，语言精炼,引用具体数据和日志中的关键信息）
+- **重要规则**：如果所有问题都已恢复，系统正常运行，应该写“系统未发现错误”，并提供证据支撑
+- 例如：“系统未发现错误。从历史日志来看曾发生 Too many connections 错误，但应用已重启成功，各项配置均正常运行。证据：后端容器 Up 30分钟、MySQL healthy、有正常业务日志。”
 - 如果有可疑容器（端口为空或状态异常），必须在问题根因中明确指出
 - 如果日志为空，需要分析可能的原因并给出检查建议
 
 ## 已恢复的历史问题
 （列出只在历史日志中出现但当前已正常的问题，如果没有则省略此节）
+- 例如：启动时出现 "Too many connections" 错误，但应用最终启动成功并有正常业务日志
 
 ## 立即执行
 1. `命令1` - 作用说明
@@ -1927,9 +1994,13 @@ async def generate_report_node(state: DiagnosisState) -> DiagnosisState:
 
 ## 服务状态
 前端: [容器名称] (状态)
+  CONTAINER ID   NAME        CPU %     MEM USAGE / LIMIT     MEM %     NET I/O           BLOCK I/O        PIDS
 后端: [容器名称] (状态)
-数据库: [中间件类型] [容器名称] (状态)  # 例如: [MySQL] mysql (Up 10 minutes)
-缓存: [中间件类型] [容器名称] (状态)  # 例如: [Redis] redis (Up 10 minutes)
+  [docker stats 输出]
+数据库: [中间件类型] [容器名称] (状态)
+  [docker stats 输出]
+缓存: [中间件类型] [容器名称] (状态)
+  [docker stats 输出]
 ```
 
 **注意：只输出上述格式的内容，不要有任何其他文字！**
