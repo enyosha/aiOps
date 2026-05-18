@@ -10,6 +10,12 @@ import time
 from typing import List, Dict, Optional
 from .conversation_manager import Session, Message
 
+# 导入 sshtunnel 错误捕获器（如果可用）
+try:
+    from .ssh_tunnel_manager import error_capture as tunnel_error_capture
+except ImportError:
+    tunnel_error_capture = None
+
 
 class RedisSessionStore:
     """Redis 会话存储管理器"""
@@ -86,6 +92,9 @@ class RedisSessionStore:
         except Exception as e:
             # Redis 连接失败时提示用户
             print(f"[警告] Redis 连接失败，会话将无法持久化: {e}")
+            # 如果有捕获的隧道错误详情，输出详细信息
+            if tunnel_error_capture and tunnel_error_capture.last_error:
+                print(f"详细:\n{tunnel_error_capture.last_error}")
             return False
 
     def load_session(self, session_id: str) -> Optional[Session]:
@@ -166,6 +175,9 @@ class RedisSessionStore:
         except Exception as e:
             # Redis 连接失败时提示用户，但不影响主流程
             print(f"[警告] Redis 连接失败，会话将无法持久化: {e}")
+            # 如果有捕获的隧道错误详情，输出详细信息
+            if tunnel_error_capture and tunnel_error_capture.last_error:
+                print(f"详细:\n{tunnel_error_capture.last_error}")
             return []
 
     def delete_session(self, session_id: str) -> bool:

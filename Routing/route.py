@@ -388,6 +388,10 @@ async def initialize_redis_and_tunnel():
 
     if not tunnel_success:
         print("[警告] SSH 隧道创建失败，将尝试直接连接 Redis")
+        # 如果有捕获的错误详情，输出详细信息
+        from Routing.ssh_tunnel_manager import error_capture
+        if error_capture and error_capture.last_error:
+            print(f"详细:\n{error_capture.last_error}")
 
     # 配置 ConversationManager 使用 Redis
     redis_config = {

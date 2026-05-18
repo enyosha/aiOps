@@ -64,6 +64,8 @@ class DiagnosisState(TypedDict):
     servers_config: dict               # 四组件配置 {frontend, backend, database, redis}
     discovered_containers: List[dict]  # Docker ps 发现的容器
     service_status_summary: str        # 服务未启动时的摘要信息
+    docker_stats_info: str             # Docker stats 资源使用情况
+    next_action: Optional[str]         # 下一步行动（由 analyze_node 决定）
 
 # ===== LLM 初始化 =====
 
@@ -545,6 +547,57 @@ async def analyze_node(state: DiagnosisState) -> DiagnosisState:
             "actions_taken": state.get('actions_taken', []) + ["force_stop_by_max_iterations"]
         }
     
+    # === 新增：检测异常的资源使用情况（高CPU、高内存）===
+    docker_stats_info = state.get('docker_stats_info', '')
+    resource_anomaly_checked = state.get('resource_anomaly_checked', False)
+    print(f"[Analyze] [DEBUG] docker_stats_info 长度: {len(docker_stats_info)}, resource_anomaly_checked: {resource_anomaly_checked}")
+    if docker_stats_info and not resource_anomaly_checked:
+        # 解析 docker stats 数据，检测异常
+        high_cpu_containers = []
+        high_memory_containers = []
+        
+        # 简单的关键词检测（实际应该解析表格数据）
+        lines = docker_stats_info.split('\n')
+        for line in lines:
+            # 检测高 CPU（>100%）
+            if '%' in line:
+                try:
+                    parts = line.split()
+                    for i, part in enumerate(parts):
+                        if '%' in part:
+                            cpu_value = float(part.replace('%', '').strip())
+                            if cpu_value > 100:
+                                container_name = parts[i-1] if i > 0 else 'unknown'
+                                high_cpu_containers.append((container_name, cpu_value))
+                            break
+                except:
+                    pass
+        
+        if high_cpu_containers:
+            print(f"[Analyze] [ALERT] 检测到 {len(high_cpu_containers)} 个容器 CPU 使用率异常高:")
+            for name, cpu in high_cpu_containers:
+                print(f"  - {name}: {cpu}%")
+            
+            # 【重要】高CPU是紧急问题，需要深入诊断
+            # 即使有其他问题（如服务缺失），也要先处理高CPU问题
+            print("[Analyze] [CRITICAL] 高CPU使用率属于紧急问题，需要深入诊断根因")
+            
+            # 如果还没有读取日志，触发读取
+            if not state.get('logs_data'):
+                print("[Analyze] 决定读取高CPU容器的详细日志、线程信息和资源使用情况")
+                return {
+                    **state,
+                    "current_step": "collect_data",
+                    "next_action": "read_logs",
+                    "resource_anomaly_checked": True,
+                    "actions_taken": state.get('actions_taken', []) + ["detect_high_cpu_critical"]
+                }
+            else:
+                # 日志已读取，继续其他诊断步骤
+                print("[Analyze] 日志已读取，继续其他诊断步骤")
+                # 清除 next_action，避免循环
+                state = {**state, "next_action": None}
+    
     # === 新增:服务未启动的快速判断 ===
     if state.get('config_status') == 'complete' and has_stopped_services(state):
         stopped_services = get_stopped_services(state)
@@ -555,8 +608,24 @@ async def analyze_node(state: DiagnosisState) -> DiagnosisState:
         missing_containers = [c for c in discovered if c.get('issue') in ['no_containers', 'service_not_found', 'compose_services_not_started']]
         
         if missing_containers:
-            # 服务完全缺失，直接生成报告
-            print(f"[Analyze] 检测到 {len(missing_containers)} 个服务完全缺失，直接生成报告")
+            # 【重要优化】服务完全缺失时，不要立即生成报告
+            # 应该先收集其他正常服务的日志和状态，以便全面诊断
+            print(f"[Analyze] 检测到 {len(missing_containers)} 个服务完全缺失")
+            for mc in missing_containers:
+                print(f"  - {mc['name']} ({mc['type']}): {mc.get('diagnosis_details', '')}")
+            
+            # 如果还没有读取日志，先读取所有可用服务的日志
+            if not state.get('logs_data'):
+                print("[Analyze] 决定先读取其他服务的日志以进行全面诊断")
+                return {
+                    **state,
+                    "current_step": "collect_data",
+                    "next_action": "read_logs",
+                    "actions_taken": state.get('actions_taken', []) + ["detect_missing_services"]
+                }
+            
+            # 如果已有日志数据，再生成报告
+            print(f"[Analyze] 已有日志数据，生成包含缺失服务的完整报告")
             missing_summary = format_stopped_services(stopped_services, '', discovered)
             return {
                 **state,
@@ -633,6 +702,9 @@ async def analyze_node(state: DiagnosisState) -> DiagnosisState:
 - 日志数据: {'已收集' if state.get('logs_data') else '未收集'}
 - 当前日志追溯范围: {state.get('log_search_range_minutes', 0)}分钟
 - 已收集的日志范围: {len(state.get('logs_collected_ranges', []))}个
+- Docker Stats: {'已收集（见下方容器资源使用情况）' if state.get('docker_stats_info') else '未收集'}
+
+{state.get('docker_stats_info', '')}
 
 请决定下一步行动（只返回一个行动名称，不要其他内容）：
 1. check_memory - 检查内存使用情况（如果还没有执行过）
@@ -658,6 +730,10 @@ async def analyze_node(state: DiagnosisState) -> DiagnosisState:
 重要判断逻辑：
 - **先通过内存/CPU/服务状态进行初步判断**
 - 如果资源状态异常(内存紧张/CPU高/服务异常) → 必须读取日志确认根因
+- **如果发现 docker stats 中有容器 CPU > 100% 或 MEM > 80%，这是紧急问题！**
+  - 必须读取该容器的详细日志（至少最近30分钟）
+  - 需要分析日志中是否有错误、警告、慢查询、频繁GC等信息
+  - 需要在报告中明确指出高CPU的根因（如：死循环、频繁GC、数据库连接池耗尽等）
 - 如果后端日志显示其他服务错误 → 使用 read_logs_recent 读取相关服务日志进行交叉验证
 - **日志是诊断的核心依据,不可跳过**
 - **优先关注最近10分钟内的日志，历史日志可能是已解决的问题**
@@ -977,11 +1053,86 @@ async def discover_containers_node(state: DiagnosisState) -> DiagnosisState:
         elif container['type'] == 'backend' and not updated_config.get('backend', {}).get('container_name'):
             updated_config.setdefault('backend', {})['container_name'] = container['name']
     
+    # === 新增：获取 docker stats 信息 ===
+    docker_stats_info = ""
+    servers_config = state.get('servers_config', {})
+    
+    # 按服务器分组容器
+    containers_by_server = {}
+    for container in all_discovered:
+        server = container.get('server', 'unknown')
+        if server not in containers_by_server:
+            containers_by_server[server] = []
+        containers_by_server[server].append(container)
+    
+    # 对每个服务器执行 docker stats
+    import paramiko
+    for server_ip, containers in containers_by_server.items():
+        # 查找该服务器的 SSH 配置
+        ssh_config = None
+        for svc_type, svc_config in servers_config.items():
+            if svc_config and svc_config.get('ssh_host') == server_ip:
+                ssh_config = svc_config
+                break
+        
+        if not ssh_config:
+            print(f"[Discover Containers] [WARN] 未找到服务器 {server_ip} 的 SSH 配置")
+            continue
+        
+        try:
+            # 建立 SSH 连接
+            ssh_client = paramiko.SSHClient()
+            ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+            
+            key_path = ssh_config.get('ssh_key_path', '')
+            if key_path:
+                key = paramiko.RSAKey.from_private_key_file(key_path)
+                ssh_client.connect(
+                    hostname=server_ip,
+                    username=ssh_config.get('ssh_user', 'root'),
+                    pkey=key,
+                    timeout=10
+                )
+            else:
+                ssh_client.connect(
+                    hostname=server_ip,
+                    username=ssh_config.get('ssh_user', 'root'),
+                    password=ssh_config.get('ssh_password', ''),
+                    timeout=10
+                )
+            
+            # 执行 docker stats 命令（只取一次快照，不持续监控）
+            stdin, stdout, stderr = ssh_client.exec_command(
+                "docker stats --no-stream --format 'table {{.ID}}\t{{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}\t{{.MemPerc}}\t{{.NetIO}}\t{{.BlockIO}}\t{{.PIDs}}'"
+            )
+            stats_output = stdout.read().decode('utf-8').strip()
+            error_output = stderr.read().decode('utf-8').strip()
+            
+            if error_output:
+                print(f"[Discover Containers] [WARN] docker stats 错误: {error_output}")
+            
+            if stats_output:
+                docker_stats_info += f"\n服务器 {server_ip}:\n{stats_output}\n"
+                print(f"[Discover Containers] 成功获取服务器 {server_ip} 的 docker stats")
+            else:
+                print(f"[Discover Containers] [WARN] 服务器 {server_ip} 的 docker stats 为空")
+            
+            ssh_client.close()
+        except Exception as e:
+            print(f"[Discover Containers] [WARN] 获取服务器 {server_ip} 的 docker stats 失败: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    print(f"[Discover Containers] [DEBUG] docker_stats_info 长度: {len(docker_stats_info)}")
+    if docker_stats_info:
+        print(f"[Discover Containers] [DEBUG] docker_stats_info 前100字符: {docker_stats_info[:100]}")
+    
     return {
         **state,
         "discovered_containers": all_discovered,
         "servers_config": updated_config,
         "config_status": "complete",  # 发现后升级为 complete
+        "docker_stats_info": docker_stats_info,  # 新增：保存 docker stats
         "iteration_count": state['iteration_count'] + 1
     }
 #     
@@ -1045,7 +1196,8 @@ async def collect_data_node(state: DiagnosisState) -> DiagnosisState:
     """
     节点3：根据当前步骤收集相应的数据
     """
-    action = state['current_step']
+    # === 修复：使用 next_action 而不是 current_step ===
+    action = state.get('next_action', state['current_step'])
     print(f"\n{'='*70}")
     print(f"[Collect Data] 执行行动: {action}")
     print(f"{'='*70}")
@@ -1061,10 +1213,19 @@ async def collect_data_node(state: DiagnosisState) -> DiagnosisState:
             # 确定本次读取的时间范围
             current_range = state.get('log_search_range_minutes', 0)
             
+            # === 新增：检测是否为高CPU紧急问题 ===
+            is_high_cpu_critical = "detect_high_cpu_critical" in state.get('actions_taken', [])
+            
             if current_range == 0:
-                # 首次读取,从30分钟开始
-                new_range = 30
-                print(f"[Collect Data] 首次读取最近{new_range}分钟日志")
+                # 首次读取
+                if is_high_cpu_critical:
+                    # 高CPU紧急问题，直接读取最近60分钟日志
+                    new_range = 60
+                    print(f"[Collect Data] [CRITICAL] 检测到高CPU问题，首次读取最近{new_range}分钟日志以深入诊断")
+                else:
+                    # 普通情况，从30分钟开始
+                    new_range = 30
+                    print(f"[Collect Data] 首次读取最近{new_range}分钟日志")
             elif current_range < 180:
                 # 扩大追溯范围: 30 → 60 → 120 → 180
                 if current_range == 30:
@@ -1208,12 +1369,23 @@ async def collect_data_node(state: DiagnosisState) -> DiagnosisState:
                 print(f"[Collect Data] 已收集范围: {[r['range_minutes'] for r in existing_ranges]}")
                 
                 # === 智能多服务日志收集 ===
-                # 检查后端日志中是否包含其他服务的错误关键词
+                # === 新增：根据容器发现结果和日志内容智能决定读取哪些服务日志 ===
                 services_to_check = []
+                
+                # 1. 检查后端日志中是否包含其他服务的错误关键词
                 if any(kw in new_logs.lower() for kw in ['redis', '6379']):
                     services_to_check.append('redis')
                 if any(kw in new_logs.lower() for kw in ['mysql', 'database', '3306']):
                     services_to_check.append('mysql')
+                
+                # 2. 检查是否有缺失的服务需要确认状态
+                discovered = state.get('discovered_containers') or []
+                missing_services = [c for c in discovered if c.get('issue') in ['no_containers', 'service_not_found']]
+                for ms in missing_services:
+                    service_type = ms.get('type', '')
+                    if service_type and service_type not in services_to_check:
+                        services_to_check.append(service_type)
+                        print(f"[Collect Data] 检测到 {service_type} 服务缺失，需要确认状态")
                 
                 # 读取相关服务日志（最近10分钟）
                 if services_to_check:
@@ -1558,55 +1730,116 @@ async def generate_report_node(state: DiagnosisState) -> DiagnosisState:
     print(f"[Generate Report] discovered_containers type: {type(state.get('discovered_containers'))}")
     print(f"[Generate Report] discovered_containers value: {state.get('discovered_containers')}")
     
-    # === 新增:服务未启动的快速报告 ===
-    service_status_summary = state.get('service_status_summary', '')
-    if service_status_summary:
-        print("[Generate Report] 生成服务未启动的快速报告")
-        
-        prompt = f"""你是运维诊断专家。检测到以下服务未启动：
+    # === 新增：构建检测到的异常情况列表（必须在快速报告检查之前）===
+    discovered = state.get('discovered_containers') or []
+    detected_anomalies = "\n\n【检测到的异常情况】\n"
+    
+    # 1. 检测高CPU容器
+    docker_stats_info_for_check = state.get('docker_stats_info', '')
+    high_cpu_list = []
+    if docker_stats_info_for_check:
+        for line in docker_stats_info_for_check.split('\n'):
+            if '%' in line:
+                try:
+                    parts = line.split()
+                    for i, part in enumerate(parts):
+                        if '%' in part and i > 0:
+                            cpu_value = float(part.replace('%', '').strip())
+                            if cpu_value > 100:
+                                container_name = parts[i-1]
+                                high_cpu_list.append(f"{container_name} ({cpu_value}%)")
+                            break
+                except:
+                    pass
+    
+    if high_cpu_list:
+        detected_anomalies += f"- **高CPU容器**: {', '.join(high_cpu_list)} ⚠️ 紧急问题\n"
+    else:
+        detected_anomalies += "- **高CPU容器**: 无\n"
+    
+    # 2. 检测缺失服务
+    missing_services = [c['name'] for c in discovered if c.get('issue') in ['no_containers', 'service_not_found']]
+    if missing_services:
+        detected_anomalies += f"- **缺失服务**: {', '.join(missing_services)} ❌\n"
+    else:
+        detected_anomalies += "- **缺失服务**: 无\n"
+    
+    # 3. 检测可疑容器
+    suspicious = [c['name'] for c in discovered if c.get('issue') == 'suspicious_container']
+    if suspicious:
+        detected_anomalies += f"- **可疑容器**: {', '.join(suspicious)} ⚠️\n"
+    else:
+        detected_anomalies += "- **可疑容器**: 无\n"
+    
+    # 4. MySQL状态
+    mysql_ok = state.get('mysql_status') and ('运行中' in state.get('mysql_status', '') or '[OK]' in state.get('mysql_status', ''))
+    detected_anomalies += f"- **MySQL状态**: {'✓ 正常' if mysql_ok else '✗ 未检查'}\n"
+    
+    # === 新增：获取 docker stats 信息（必须在快速报告检查之前）===
+    docker_stats_info = state.get('docker_stats_info', '')
+    
+    # === 临时禁用：服务未启动的快速报告（所有问题走完整诊断流程）===
+    # service_status_summary = state.get('service_status_summary', '')
+    # if service_status_summary:
+    #     print("[Generate Report] 生成服务未启动的快速报告")
+    #     
+    #     # === 修复：在快速报告中也包含所有检测到的异常 ===
+    #     prompt = f"""你是运维诊断专家。检测到以下服务未启动：
 
-{service_status_summary}
+# {service_status_summary}
 
-请基于以上信息生成诊断报告：
-1. 明确指出哪些服务未启动
-2. 分析可能的原因（基于日志证据）
-3. 给出恢复步骤
+# {detected_anomalies}
 
-【输出格式要求】
-```markdown
-## 问题根因
-（精炼描述服务未启动的原因，引用日志证据）
+# {docker_stats_info}
 
-## 立即执行
-1. `docker start <container_name>` - 启动未运行的服务
-2. `docker logs <container_name> --tail 50` - 查看启动日志确认正常
-3. （根据实际情况补充其他步骤）...
+# 请基于以上信息生成诊断报告：
+# 1. **明确指出所有检测到的问题**（包括服务缺失、高CPU、可疑容器等）
+# 2. 分析可能的原因（基于日志证据）
+# 3. 给出恢复步骤
 
-## 长期优化
-1. 配置容器自动重启策略：docker update --restart=unless-stopped <container>
-2. 添加健康检查和监控告警
-3. ...
-```
+# 【重要要求】
+# - 必须在"问题根因"中列出**所有**检测到的问题，不要遗漏任何一个
+# - 如果检测到高CPU（>100%），必须在报告中明确指出并标记为紧急问题
+# - 如果有多个问题，按严重程度排序：高CPU > 服务缺失 > 可疑容器
 
-**注意：只输出上述格式的内容，不要有任何其他文字！**
-"""
-        response = await llm.ainvoke(prompt)
-        
-        stopped_services = get_stopped_services(state)
-        
-        return {
-            **state,
-            "diagnosis_result": {
-                "content": response.content,
-                "confidence": "high",
-                "data_sources": {
-                    "service_status": True,
-                    "logs": bool(state.get('logs_data'))
-                },
-                "stopped_services": stopped_services
-            },
-            "current_step": "complete"
-        }
+# 【输出格式要求】
+# ```markdown
+# ## 问题根因
+# （精炼描述所有问题的原因，引用日志证据）
+# - 问题1: ...
+# - 问题2: ...
+# ...
+
+# ## 立即执行
+# 1. `命令1` - 作用说明
+# 2. `命令2` - 作用说明
+# ...
+
+# ## 长期优化
+# 1. 建议1
+# 2. 建议2
+# ...
+# ```
+
+# **注意：只输出上述格式的内容，不要有任何其他文字！**
+# """
+    #     response = await llm.ainvoke(prompt)
+    #     
+    #     stopped_services = get_stopped_services(state)
+    #     
+    #     return {
+    #         **state,
+    #         "diagnosis_result": {
+    #             "content": response.content,
+    #             "confidence": "high",
+    #             "data_sources": {
+    #                 "service_status": True,
+    #                 "logs": bool(state.get('logs_data'))
+    #             },
+    #             "stopped_services": stopped_services
+    #         },
+    #         "current_step": "complete"
+    #     }
     
     # === 原有逻辑:正常诊断流程的报告生成 ===
     alert = state.get('alert_event', {})
@@ -1726,8 +1959,22 @@ async def generate_report_node(state: DiagnosisState) -> DiagnosisState:
         log_collection_status += "\n[IMPORTANT] 上述服务已通过日志读取验证为正常运行状态，诊断时应排除这些服务的'容器不存在'问题\n"
     
     container_status_info = ""
+    
+    # === 新增：处理缺失的服务容器 ===
+    missing_containers = [c for c in discovered if c.get('issue') in ['no_containers', 'service_not_found']]
+    if missing_containers:
+        container_status_info += "\n\n【缺失的服务】\n"
+        for c in missing_containers:
+            container_status_info += f"- {c['name']} ({c.get('type', 'unknown')}): {c.get('diagnosis_details', '')}\n"
+            if c.get('suggestions'):
+                container_status_info += "  建议操作:\n"
+                for sug in c['suggestions']:
+                    container_status_info += f"    * `{sug}`\n"
+    
+    # 处理可疑容器
+    suspicious_containers = [c for c in discovered if c.get('issue') == 'suspicious_container']
     if suspicious_containers:
-        container_status_info = "\n\n【可疑容器状态】\n"
+        container_status_info += "\n\n【可疑容器状态】\n"
         for c in suspicious_containers:
             container_status_info += f"- {c['name']} ({c.get('type', 'unknown')}): {c.get('diagnosis_details', '')}\n"
             if c.get('suggestions'):
@@ -1751,75 +1998,7 @@ async def generate_report_node(state: DiagnosisState) -> DiagnosisState:
     discovered = state.get('discovered_containers') or []
     service_status_detail = "\n\n【各服务运行状态】\n"
     
-    # === 新增：获取 docker stats 信息 ===
-    docker_stats_info = ""
-    servers_config = state.get('servers_config', {})
-    
-    # 按服务器分组容器
-    containers_by_server = {}
-    for container in discovered:
-        server = container.get('server', 'unknown')
-        if server not in containers_by_server:
-            containers_by_server[server] = []
-        containers_by_server[server].append(container)
-    
-    # 对每个服务器执行 docker stats
-    import paramiko
-    for server_ip, containers in containers_by_server.items():
-        # 查找该服务器的 SSH 配置
-        ssh_config = None
-        for svc_type, svc_config in servers_config.items():
-            if svc_config and svc_config.get('ssh_host') == server_ip:
-                ssh_config = svc_config
-                break
-        
-        if not ssh_config:
-            print(f"[Generate Report] [WARN] 未找到服务器 {server_ip} 的 SSH 配置")
-            continue
-        
-        try:
-            # 建立 SSH 连接
-            ssh_client = paramiko.SSHClient()
-            ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-            
-            key_path = ssh_config.get('ssh_key_path', '')
-            if key_path:
-                key = paramiko.RSAKey.from_private_key_file(key_path)
-                ssh_client.connect(
-                    hostname=server_ip,
-                    username=ssh_config.get('ssh_user', 'root'),
-                    pkey=key,
-                    timeout=10
-                )
-            else:
-                ssh_client.connect(
-                    hostname=server_ip,
-                    username=ssh_config.get('ssh_user', 'root'),
-                    password=ssh_config.get('ssh_password', ''),
-                    timeout=10
-                )
-            
-            # 执行 docker stats 命令（只取一次快照，不持续监控）
-            stdin, stdout, stderr = ssh_client.exec_command(
-                "docker stats --no-stream --format 'table {{.ID}}\t{{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}\t{{.MemPerc}}\t{{.NetIO}}\t{{.BlockIO}}\t{{.PIDs}}'"
-            )
-            stats_output = stdout.read().decode('utf-8').strip()
-            error_output = stderr.read().decode('utf-8').strip()
-            
-            if error_output:
-                print(f"[Generate Report] [WARN] docker stats 错误: {error_output}")
-            
-            if stats_output:
-                docker_stats_info += f"\n服务器 {server_ip}:\n{stats_output}\n"
-                print(f"[Generate Report] 成功获取服务器 {server_ip} 的 docker stats")
-            else:
-                print(f"[Generate Report] [WARN] 服务器 {server_ip} 的 docker stats 为空")
-            
-            ssh_client.close()
-        except Exception as e:
-            print(f"[Generate Report] [WARN] 获取服务器 {server_ip} 的 docker stats 失败: {e}")
-            import traceback
-            traceback.print_exc()
+    # === 注意：docker_stats_info 已经在前面从 state 中获取了 ===
     
     # 按服务类型分组
     services_by_type = {}
@@ -1897,6 +2076,9 @@ async def generate_report_node(state: DiagnosisState) -> DiagnosisState:
 
 {docker_stats_info}
 
+【检测到的异常情况】
+{detected_anomalies}
+
 【多服务日志摘要】
 - 后端日志行数: {len(backend_logs.splitlines()) if backend_logs else 0}
 - 前端日志行数: {len(frontend_logs.splitlines()) if frontend_logs else 0}
@@ -1936,7 +2118,9 @@ async def generate_report_node(state: DiagnosisState) -> DiagnosisState:
 4. **内存/CPU 问题验证**:
    - 证据1: check_memory/check_cpu 状态
    - 证据2: 应用日志中的 OOM/性能错误
-   - 判定: 两者都异常才确认
+   - 证据3: docker stats 显示的 CPU/内存使用率
+   - 判定: 如果 docker stats 显示 CPU > 100%，必须检查应用日志中是否有相关错误（如线程阻塞、死循环、频繁GC等）
+   - **重要**: 在报告中描述高CPU问题时，必须引用日志证据，例如："通过查询容器 ruoyi-app 的日志发现 XXX 错误，导致 CPU 使用率达到 180%"
 
 【时间维度判断】
 - **优先关注最近10分钟内的日志**：这些反映当前问题
@@ -1963,15 +2147,19 @@ async def generate_report_node(state: DiagnosisState) -> DiagnosisState:
    - 性能退化(响应时间增加、资源使用率飙升等)
    - 任何与正常行为不符的模式
 3. **结合内存、CPU、服务状态等资源指标进行综合判断**
-4. 如果发现任何问题,必须在“问题根因”中明确指出
-5. **只输出Markdown格式的诊断报告，不要添加任何额外的解释、总结或说明文字**
-6. **不要在```markdown代码块之外添加任何内容**
-7. 输出必须简洁明了，避免重复
-8. **关键证据优先级规则**:
+4. 如果发现任何问题,必须在"问题根因"中明确指出
+5. **引用日志证据**: 在描述每个问题时，必须引用具体的日志证据，例如：
+   - "通过查询容器 ruoyi-app 的日志发现 XXX 错误，导致 CPU 使用率达到 180%"
+   - "从后端日志中发现 MySQL 连接超时错误（最近10分钟内出现3次）"
+   - "前端日志显示服务启动失败，错误信息: XXX"
+6. **只输出Markdown格式的诊断报告，不要添加任何额外的解释、总结或说明文字**
+7. **不要在```markdown代码块之外添加任何内容**
+8. 输出必须简洁明了，避免重复
+9. **关键证据优先级规则**:
    - 如果【关键证据 - 运行中的服务】显示某服务成功读取了日志 → 该服务容器一定存在且可访问
    - 即使在其他地方看到"No such container"等错误信息，也应优先相信日志读取成功的证据
    - 例如：如果前端日志成功读取了1行，就绝对不能说"ruoyi-frontend 容器不存在"
-9. **交叉验证原则**: 当不同证据源矛盾时，按以下优先级判断:
+10. **交叉验证原则**: 当不同证据源矛盾时，按以下优先级判断:
    - 最高优先级: 实际日志读取结果（能读到日志 = 容器存在）
    - 次高优先级: 容器发现阶段的 docker ps 结果
    - 较低优先级: 工具调用过程中的临时错误信息
@@ -2003,9 +2191,12 @@ async def generate_report_node(state: DiagnosisState) -> DiagnosisState:
 后端: [容器名称] (状态)
 数据库: [中间件类型] [容器名称] (状态)
 缓存: [中间件类型] [容器名称] (状态)
-
-**重要**：在“服务状态”章节中，必须包含下面提供的【容器资源使用情况】数据，完整展示每个服务器的 docker stats 表格。
 ```
+
+**重要提示**：
+- **每个章节只能出现一次**，不要重复输出相同的章节标题
+- 在"服务状态"章节中，必须完整展示下面提供的【容器资源使用情况】数据
+- 将 docker stats 表格直接放在服务状态后面，不要添加任何说明文字
 
 **重要：只输出上述 Markdown 内容，不要输出任何其他文字、说明或示例！**
 """
@@ -2035,6 +2226,9 @@ async def generate_report_node(state: DiagnosisState) -> DiagnosisState:
 def route_after_analyze(state: DiagnosisState) -> str:
     """根据分析结果路由到相应节点"""
     action = state['current_step']
+    next_action = state.get('next_action', '')
+    
+    print(f"[Route] [DEBUG] current_step: {action}, next_action: {next_action}")
     
     # === 新增:配置错误和服务未启动的快速路由 ===
     if action == "error_no_config":
@@ -2047,7 +2241,11 @@ def route_after_analyze(state: DiagnosisState) -> str:
     if action == "generate_report":
         return "generate_report"
     
-    # === 原有路由逻辑保持不变 ===
+    # === 修复：检查 next_action 而不是 current_step ===
+    if next_action in ["read_logs", "check_memory", "check_cpu", "check_service", "check_mysql"]:
+        return "collect_data"
+    
+    # 兼容旧逻辑：如果 current_step 是行动名称
     if action in ["read_logs", "check_memory", "check_cpu", "check_service", "check_mysql"]:
         return "collect_data"
     

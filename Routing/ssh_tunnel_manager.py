@@ -8,9 +8,34 @@ SSH 隧道管理器
 import warnings
 warnings.filterwarnings('ignore', category=DeprecationWarning, module='paramiko')
 
-# 屏蔽 sshtunnel 的重试错误日志（Redis 不可用时会频繁重试）
+# 自定义日志处理器：捕获 sshtunnel 的最后一次错误
 import logging
-logging.getLogger('sshtunnel').setLevel(logging.CRITICAL)
+import sys
+from io import StringIO
+
+class LastErrorCapture(logging.Handler):
+    """捕获并存储最后一次错误日志"""
+    def __init__(self):
+        super().__init__()
+        self.last_error = None
+    
+    def emit(self, record):
+        if record.levelno >= logging.ERROR:
+            self.last_error = self.format(record)
+
+# 设置 sshtunnel 日志捕获
+sshtunnel_logger = logging.getLogger('sshtunnel')
+sshtunnel_logger.setLevel(logging.ERROR)
+error_capture = LastErrorCapture()
+error_capture.setFormatter(logging.Formatter('%(asctime)s| %(levelname)-7s | %(message)s'))
+sshtunnel_logger.addHandler(error_capture)
+# 阻止日志传播到根日志器（避免重复输出）
+sshtunnel_logger.propagate = False
+
+# 同时屏蔽 paramiko 的日志
+paramiko_logger = logging.getLogger('paramiko')
+paramiko_logger.setLevel(logging.CRITICAL)
+paramiko_logger.propagate = False
 
 import paramiko
 from sshtunnel import SSHTunnelForwarder
@@ -23,6 +48,7 @@ class SSHTunnelManager:
     def __init__(self):
         self.tunnel: Optional[SSHTunnelForwarder] = None
         self.ssh_client: Optional[paramiko.SSHClient] = None
+        self.error_capture: Optional[LastErrorCapture] = error_capture
 
     def create_tunnel(
         self,
@@ -85,6 +111,9 @@ class SSHTunnelManager:
             return False
         except Exception as e:
             print(f"[警告] SSH 隧道创建失败: {e}")
+            # 如果有捕获的错误详情，输出详细信息
+            if self.error_capture and self.error_capture.last_error:
+                print(f"详细:\n{self.error_capture.last_error}")
             return False
 
     def close_tunnel(self):

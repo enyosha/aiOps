@@ -1,0 +1,235 @@
+(venv) PS C:\Users\ensha\Desktop\AiOps\GitHub\Aiops\Client> python .\Client_test.py
+C:\Users\ensha\Desktop\AiOps\GitHub\Aiops\venv\Lib\site-packages\paramiko\pkey.py:100: CryptographyDeprecationWarning: TripleDES has been moved to cryptography.hazmat.decrepit.ciphers.algorithms.TripleDES and will be removed from cryptography.hazmat.primitives.ciphers.algorithms in 48.0.0.
+  "cipher": algorithms.TripleDES,
+C:\Users\ensha\Desktop\AiOps\GitHub\Aiops\venv\Lib\site-packages\paramiko\transport.py:259: CryptographyDeprecationWarning: TripleDES has been moved to cryptography.hazmat.decrepit.ciphers.algorithms.TripleDES and will be removed from cryptography.hazmat.primitives.ciphers.algorithms in 48.0.0.
+  "class": algorithms.TripleDES,
+[SSH Tunnel] 隧道已建立: localhost:6379 -> 8.130.131.36:6379
+[ConversationManager] Redis 持久化已启用
+======================================================================
+AI Assistant - 循环对话模式
+======================================================================
+
+📋 最近的会话历史：
+----------------------------------------------------------------------
+1. Session ID: 58a80dfd-3bad-48ba-8125-5588b44da41e
+   消息数: 2 | 创建时间: 2026-05-15 17:20:16
+2. Session ID: c9a3989a-66fc-40b6-9d05-ccb860f4785f
+   消息数: 8 | 创建时间: 2026-05-15 10:42:15
+3. Session ID: 95643af1-52b6-40ba-bfde-9bb1ab7afd4a
+   消息数: 4 | 创建时间: 2026-05-14 21:52:40
+4. Session ID: c6d2a310-42c0-41fb-aae8-38373bb2ef60
+   消息数: 6 | 创建时间: 2026-05-13 15:18:38
+5. Session ID: 543b84c2-bfae-4899-a7b2-cf412903db19
+   消息数: 4 | 创建时间: 2026-05-13 11:23:08
+----------------------------------------------------------------------
+
+请选择会话（输入编号 / 'new' 创建新会话 / 直接输入 Session ID）: 1
+
+✅ 已加载会话: 58a80dfd-3bad-48ba-8125-5588b44da41e
+
+======================================================================
+💡 使用提示：
+  • 直接输入问题开始对话
+  • 输入 'quit' 或 'exit' 退出程序
+  • 输入 'clear' 清空当前会话历史
+  • 输入 'info' 查看会话信息
+  • 输入 'stats' 查看工具缓存统计
+  • 输入 'backend' 切换 RAG 向量库 (ChromaDB / Milvus)
+  • 输入 'diag <问题描述>' 快速启动诊断
+  • 输入 'help' 显示此帮助信息
+======================================================================
+
+👤 您: 应用状态
+
+🤖 AI 思考中...
+[ConversationManager] 创建新会话: 58a80dfd-3bad-48ba-8125-5588b44da41e
+
+======================================================================
+🔍 启动运维诊断流程
+======================================================================
+诊断目标: 应用状态
+容器名称: ruoyi-app
+----------------------------------------------------------------------
+诊断过程将实时显示如下:
+----------------------------------------------------------------------
+[WARNING] dotenv_values 返回空配置，尝试使用 os.environ
+
+======================================================================
+[Analyze] 分析当前状态 (迭代 0/8)
+======================================================================
+[Analyze] [DEBUG] docker_stats_info 长度: 0, resource_anomaly_checked: False
+[Analyze] 配置不完整,触发 Docker 容器发现
+[Route] [DEBUG] current_step: discover_containers, next_action:
+
+======================================================================
+[Discover Containers] 开始 Docker 容器发现
+======================================================================
+[Discover Containers] SSH 连接成功: 8.146.236.55
+[Discover Containers] 在 8.146.236.55 上发现 1 个容器:
+  - ruoyi-frontend (frontend): 0.0.0.0:80->80/tcp, :::80->80/tcp
+[Discover Containers] SSH 连接成功: 8.130.131.36
+[Discover Containers] 在 8.130.131.36 上发现 3 个容器:
+  - ruoyi-app (backend): 0.0.0.0:8080->8080/tcp, :::8080->8080/tcp
+  - mysql (database): 0.0.0.0:3306->3306/tcp, :::3306->3306/tcp, 33060/tcp
+  - redis (redis): 0.0.0.0:6379->6379/tcp, :::6379->6379/tcp
+
+[Discover Containers] Docker 容器发现结束，一共发现了 4 个容器:
+  - ruoyi-frontend (frontend): 0.0.0.0:80->80/tcp, :::80->80/tcp [服务器: 8.146.236.55]
+  - ruoyi-app (backend): 0.0.0.0:8080->8080/tcp, :::8080->8080/tcp [服务器: 8.130.131.36]
+  - mysql (database): 0.0.0.0:3306->3306/tcp, :::3306->3306/tcp, 33060/tcp [服务器: 8.130.131.36]
+  - redis (redis): 0.0.0.0:6379->6379/tcp, :::6379->6379/tcp [服务器: 8.130.131.36]
+[Discover Containers] 成功获取服务器 8.146.236.55 的 docker stats
+[Discover Containers] 成功获取服务器 8.130.131.36 的 docker stats
+[Discover Containers] [DEBUG] docker_stats_info 长度: 681
+[Discover Containers] [DEBUG] docker_stats_info 前100字符:
+服务器 8.146.236.55:
+CONTAINER ID   NAME             CPU %     MEM USAGE / LIMIT   MEM %     NET I/O
+
+======================================================================
+[Analyze] 分析当前状态 (迭代 1/8)
+======================================================================
+[Analyze] [DEBUG] docker_stats_info 长度: 681, resource_anomaly_checked: False
+[Analyze] 决定下一步行动: check_memory
+[Route] [DEBUG] current_step: check_memory, next_action: 
+
+======================================================================
+[Collect Data] 执行行动: check_memory
+======================================================================
+[ToolCache] 首次加载工具: log-reader
+[ToolCache] 路径转换: C:\Users\ensha\Desktop\AiOps\GitHub\Aiops\Server\logReader_server.py
+[ToolCache] 启动服务器: python C:\Users\ensha\Desktop\AiOps\GitHub\Aiops\Server\logReader_server.py
+[ToolCache] 成功加载 7 个工具: log-reader
+[Collect Data] 检查内存使用情况
+[Collect Data] 内存信息:
+total        used        free      shared  buff/cache   available
+Mem:          1.8Gi       1.5Gi        81Mi       2.0Mi       454Mi       386Mi
+Swap:            0B          0B          0B
+
+======================================================================
+[Analyze] 分析当前状态 (迭代 2/8)
+======================================================================
+[Analyze] [DEBUG] docker_stats_info 长度: 681, resource_anomaly_checked: False
+[Analyze] 决定下一步行动: check_cpu
+[Route] [DEBUG] current_step: check_cpu, next_action: 
+
+======================================================================
+[Collect Data] 执行行动: check_cpu
+======================================================================
+[ToolCache] 使用缓存的工具: log-reader (PID保持)
+[Collect Data] 检查CPU使用情况
+[Collect Data] CPU使用情况:
+%Cpu(s):  6.5 us,  3.2 sy,  0.0 ni, 90.3 id,  0.0 wa,  0.0 hi,  0.0 si,  0.0 st
+
+======================================================================
+[Analyze] 分析当前状态 (迭代 3/8)
+======================================================================
+[Analyze] [DEBUG] docker_stats_info 长度: 681, resource_anomaly_checked: False
+[Analyze] 决定下一步行动: check_service
+[Route] [DEBUG] current_step: check_service, next_action: 
+
+======================================================================
+[Collect Data] 执行行动: check_service
+======================================================================
+[ToolCache] 使用缓存的工具: log-reader (PID保持)
+[Collect Data] 检查服务状态
+[Collect Data] 服务状态 [ruoyi-app]:
+  运行中: True, 详情: Up 6 minutes
+
+======================================================================
+[Analyze] 分析当前状态 (迭代 4/8)
+======================================================================
+[Analyze] [DEBUG] docker_stats_info 长度: 681, resource_anomaly_checked: False
+[Analyze] 决定下一步行动: check_mysql
+[Route] [DEBUG] current_step: check_mysql, next_action: 
+
+======================================================================
+[Collect Data] 执行行动: check_mysql
+======================================================================
+[ToolCache] 使用缓存的工具: log-reader (PID保持)
+[Collect Data] 检查MySQL数据库状态
+[Collect Data] MySQL 数据库状态:
+  运行状态: [OK] 运行中
+  进程信息: systemd+  791578  0.3 29.4 2213244 570076 ?      Ssl  May14   5:00 mysqld --default-authentication-plugin=mysql_native_password
+  端口监听: tcp        0      0 0.0.0.0:3306            0.0.0.0:*               LISTEN      791533/docker-proxy
+tcp6       0      0 :::3306                 :::*                    LISTEN      791539/docker-proxy
+  Docker 容器: mysql    Up 24 hours (healthy)
+
+======================================================================
+[Analyze] 分析当前状态 (迭代 5/8)
+======================================================================
+[Analyze] [DEBUG] docker_stats_info 长度: 681, resource_anomaly_checked: False
+[Analyze] 决定下一步行动: read_logs
+[Route] [DEBUG] current_step: read_logs, next_action: 
+
+======================================================================
+[Collect Data] 执行行动: read_logs
+======================================================================
+[ToolCache] 使用缓存的工具: log-reader (PID保持)
+[Collect Data] 首次读取最近30分钟日志
+[Collect Data] 读取时间范围: 2026-05-15T17:23:45 到 2026-05-15T17:53:45
+[Collect Data] 读取到 500 行日志
+[Collect Data] 累积日志总数: 500 行
+[Collect Data] 已收集范围: [30]
+[Collect Data] 检测到后端日志中包含其他服务错误，开始读取相关服务日志...
+[Collect Data] 读取 mysql 服务日志 (容器: mysql)
+
+======================================================================
+[Analyze] 分析当前状态 (迭代 6/8)
+======================================================================
+[Analyze] [DEBUG] docker_stats_info 长度: 681, resource_anomaly_checked: False
+[Analyze] 决定下一步行动: read_logs_recent
+[Route] [DEBUG] current_step: read_logs_recent, next_action: 
+
+======================================================================
+[Generate Report] 生成最终诊断报告
+======================================================================
+[Generate Report] state keys: ['alert_event', 'container_name', 'messages', 'current_step', 'iteration_count', 'max_iterations', 'actions_taken', 'anomaly_timestamps', 'logs_data', 'memory_info', 'cpu_info', 'service_status', 'mysql_status', 'log_search_range_minutes', 'logs_collected_ranges', 'diagnosis_result', 'config_status', 'servers_config', 'discovered_containers', 'service_status_summary', 'docker_stats_info']
+[Generate Report] discovered_containers type: <class 'list'>
+[Generate Report] discovered_containers value: [{'name': 'ruoyi-frontend', 'ports': '0.0.0.0:80->80/tcp, :::80->80/tcp', 'type': 'frontend', 'status': 'Up 3 hours', 'server': '8.146.236.55'}, {'name': 'ruoyi-app', 'ports': '0.0.0.0:8080->8080/tcp, :::8080->8080/tcp', 'type': 'backend', 'status': 'Up 5 minutes', 'server': '8.130.131.36'}, {'name': 'mysql', 'ports': '0.0.0.0:3306->3306/tcp, :::3306->3306/tcp, 33060/tcp', 'type': 'database', 'status': 'Up 24 hours (healthy)', 'server': '8.130.131.36'}, {'name': 'redis', 'ports': '0.0.0.0:6379->6379/tcp, :::6379->6379/tcp', 'type': 'redis', 'status': 'Up 31 hours (healthy)', 'server': '8.130.131.36'}]
+[Generate Report] 诊断完成
+
+======================================================================
+✅ 诊断完成
+======================================================================
+迭代次数: 6
+数据收集状态:
+  - 日志: ✓
+  - 内存: ✓
+  - CPU: ✓
+  - 服务状态: ✓
+======================================================================
+🤖 AI: ```markdown
+## 问题根因
+系统未发现错误。从历史日志来看曾发生 "Too many connections" 错误，但应用已重启成功，各项配置均正常运行。证据：后端日志显示应用启动成功且有正常业务日志。 
+
+## 已恢复的历史问题
+- **MySQL 连接超时**：在应用启动过程中，出现 "Too many connections" 错误，但应用最终启动成功并正常运行。证据：后端日志中显示 "Starting RuoYiApplication using Java 17.0.18 with PID 1 (/app/app.jar started by root in /app)" 和 "Started RuoYiApplication in 22.275 seconds (process running for 24.23)"。       
+
+## 立即执行
+无
+
+## 长期优化
+1. 增加 MySQL 数据库的最大连接数配置，以避免在高并发情况下出现 "Too many connections" 错误。
+2. 优化数据库连接池配置，确保连接池的大小和超时时间设置合理。
+3. 定期检查和优化 SQL 查询，减少不必要的数据库连接和查询时间。
+
+## 服务状态
+前端: ruoyi-frontend (Up 3 hours)
+后端: ruoyi-app (Up 5 minutes)
+数据库: [MySQL] mysql (Up 24 hours (healthy))
+缓存: [Redis] redis (Up 31 hours (healthy))
+
+### 容器资源使用情况
+服务器 8.146.236.55:
+CONTAINER ID   NAME             CPU %     MEM USAGE / LIMIT   MEM %     NET I/O          BLOCK I/O     PIDS
+ff66c31401db   ruoyi-frontend   0.00%     5.035MiB / 512MiB   0.98%     33.3kB / 202kB   3.04MB / 0B   3
+
+服务器 8.130.131.36:
+CONTAINER ID   NAME        CPU %     MEM USAGE / LIMIT     MEM %     NET I/O           BLOCK I/O        PIDS
+d515a064e510   ruoyi-app   0.10%     436.4MiB / 1GiB       42.61%    16.9kB / 18.6kB   36.7MB / 0B      138
+b9048d16fbb7   mysql       0.24%     570.8MiB / 1.844GiB   30.23%    5.9MB / 6.96MB    128MB / 293MB    69
+7e9e06d36a59   redis       0.32%     14.02MiB / 512MiB     2.74%     86.2MB / 54.5MB   36.9MB / 750kB   6
+```
+   📦 [工具缓存命中: 1 个服务器]
+
+👤 您:
