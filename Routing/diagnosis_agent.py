@@ -66,6 +66,15 @@ class DiagnosisState(TypedDict):
     service_status_summary: str        # 服务未启动时的摘要信息
     docker_stats_info: str             # Docker stats 资源使用情况
     next_action: Optional[str]         # 下一步行动（由 analyze_node 决定）
+    
+    # === 新增字段：健康检查结果 ===
+    health_check_results: Optional[dict]  # 健康检查结果 {service_name: {status, details}}
+    port_check_results: Optional[dict]    # 端口检查结果 {service_name: {port, reachable}}
+    performance_metrics: Optional[dict]   # 性能指标 {service_name: {cpu, memory, response_time}}
+    health_check_summary: Optional[str]   # 健康检查摘要文本
+    
+    # === 内部调试字段（不用于诊断逻辑）===
+    _health_check_execution_count: int    # 健康检查执行次数计数器
 
 # ===== LLM 初始化 =====
 
@@ -148,6 +157,306 @@ def determine_config_status(servers_config: dict) -> str:
         return "partial"
     else:
         return "complete"
+
+
+# ===== 健康检查辅助函数 =====
+
+def check_http_health(host: str, port: int, path: str = "/health", timeout: int = 5) -> dict:
+    """
+    通过HTTP请求检查服务健康状态
+    
+    Args:
+        host: 服务主机地址
+        port: 服务端口
+        path: 健康检查路径，默认/health
+        timeout: 超时时间(秒)
+    
+    Returns:
+        {
+            'status': 'healthy' | 'unhealthy' | 'timeout' | 'error',
+            'status_code': int or None,
+            'response_time_ms': float,
+            'error': str or None
+        }
+    """
+    import requests
+    from time import time
+    
+    try:
+        url = f"http://{host}:{port}{path}"
+        start_time = time()
+        response = requests.get(url, timeout=timeout)
+        elapsed_ms = (time() - start_time) * 1000
+        
+        if response.status_code == 200:
+            return {
+                'status': 'healthy',
+                'status_code': response.status_code,
+                'response_time_ms': round(elapsed_ms, 2),
+                'error': None
+            }
+        else:
+            return {
+                'status': 'unhealthy',
+                'status_code': response.status_code,
+                'response_time_ms': round(elapsed_ms, 2),
+                'error': f"HTTP {response.status_code}"
+            }
+    except requests.exceptions.Timeout:
+        return {
+            'status': 'timeout',
+            'status_code': None,
+            'response_time_ms': None,
+            'error': f"请求超时({timeout}秒)"
+        }
+    except requests.exceptions.ConnectionError as e:
+        return {
+            'status': 'error',
+            'status_code': None,
+            'response_time_ms': None,
+            'error': f"连接失败: {str(e)}"
+        }
+    except Exception as e:
+        return {
+            'status': 'error',
+            'status_code': None,
+            'response_time_ms': None,
+            'error': str(e)
+        }
+
+def get_performance_metrics(container_name: str, ssh_host: str = None) -> dict:
+    """
+    获取容器性能指标（CPU、内存）
+    
+    Args:
+        container_name: 容器名称
+        ssh_host: SSH主机地址（可选）
+    
+    Returns:
+        {
+            'cpu_percent': float,
+            'memory_usage_mb': float,
+            'memory_limit_mb': float,
+            'memory_percent': float,
+            'error': str or None
+        }
+    """
+    from dotenv import dotenv_values
+    import os
+    import paramiko
+    
+    try:
+        # 确定SSH配置
+        env_file = os.path.join(os.path.dirname(os.path.dirname(__file__)), '.env')
+        config = dotenv_values(env_file, encoding='utf-8')
+        
+        if ssh_host:
+            # 查找对应服务器的配置
+            for key in ['FRONTEND', 'BACKEND']:
+                if config.get(f'{key}_SSH_HOST') == ssh_host:
+                    ssh_user = config.get(f'{key}_SSH_USER', 'root')
+                    ssh_port = int(config.get(f'{key}_SSH_PORT', '22'))
+                    ssh_key_path = config.get(f'{key}_SSH_KEY_PATH', '')
+                    break
+            else:
+                # 默认使用backend配置
+                ssh_user = config.get('BACKEND_SSH_USER', 'root')
+                ssh_port = int(config.get('BACKEND_SSH_PORT', '22'))
+                ssh_key_path = config.get('BACKEND_SSH_KEY_PATH', '')
+        else:
+            ssh_user = config.get('BACKEND_SSH_USER', 'root')
+            ssh_port = int(config.get('BACKEND_SSH_PORT', '22'))
+            ssh_key_path = config.get('BACKEND_SSH_KEY_PATH', '')
+        
+        # 建立SSH连接
+        ssh_client = paramiko.SSHClient()
+        ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        
+        if ssh_key_path and os.path.exists(ssh_key_path):
+            private_key = paramiko.RSAKey.from_private_key_file(ssh_key_path)
+            ssh_client.connect(hostname=ssh_host or config.get('BACKEND_SSH_HOST'), 
+                             port=ssh_port, username=ssh_user, pkey=private_key)
+        else:
+            ssh_client.connect(hostname=ssh_host or config.get('BACKEND_SSH_HOST'),
+                             port=ssh_port, username=ssh_user)
+        
+        # 执行docker stats命令
+        cmd = f"docker stats {container_name} --no-stream --format '{{{{.CPUPerc}}}}|{{{{.MemUsage}}}}|{{{{.MemPerc}}}}'"
+        stdin, stdout, stderr = ssh_client.exec_command(cmd)
+        output = stdout.read().decode('utf-8').strip()
+        error_output = stderr.read().decode('utf-8').strip()
+        ssh_client.close()
+        
+        if error_output:
+            return {
+                'cpu_percent': 0.0,
+                'memory_usage_mb': 0.0,
+                'memory_limit_mb': 0.0,
+                'memory_percent': 0.0,
+                'error': error_output
+            }
+        
+        # 解析输出
+        parts = output.split('|')
+        if len(parts) == 3:
+            cpu_str = parts[0].replace('%', '').strip()
+            mem_usage_str = parts[1].split('/')[0].strip()
+            mem_limit_str = parts[1].split('/')[1].strip()
+            mem_perc_str = parts[2].replace('%', '').strip()
+            
+            # 转换单位
+            def parse_memory(mem_str):
+                if 'GiB' in mem_str:
+                    return float(mem_str.replace('GiB', '').strip()) * 1024
+                elif 'MiB' in mem_str:
+                    return float(mem_str.replace('MiB', '').strip())
+                elif 'KiB' in mem_str:
+                    return float(mem_str.replace('KiB', '').strip()) / 1024
+                else:
+                    return float(mem_str)
+            
+            return {
+                'cpu_percent': float(cpu_str),
+                'memory_usage_mb': parse_memory(mem_usage_str),
+                'memory_limit_mb': parse_memory(mem_limit_str),
+                'memory_percent': float(mem_perc_str),
+                'error': None
+            }
+        else:
+            return {
+                'cpu_percent': 0.0,
+                'memory_usage_mb': 0.0,
+                'memory_limit_mb': 0.0,
+                'memory_percent': 0.0,
+                'error': f"无法解析docker stats输出: {output}"
+            }
+    
+    except Exception as e:
+        return {
+            'cpu_percent': 0.0,
+            'memory_usage_mb': 0.0,
+            'memory_limit_mb': 0.0,
+            'memory_percent': 0.0,
+            'error': str(e)
+        }
+
+
+async def perform_health_checks(state: DiagnosisState) -> dict:
+    """
+    对所有发现的服务执行健康检查
+    
+    Returns:
+        {
+            'health_check_results': {...},
+            'port_check_results': {...},
+            'performance_metrics': {...},
+            'summary': str
+        }
+    """
+    discovered = state.get('discovered_containers', [])
+    servers_config = state.get('servers_config', {})
+    
+    health_results = {}
+    port_results = {}
+    perf_metrics = {}
+    
+    for container in discovered:
+        name = container.get('name', '')
+        ctype = container.get('type', '')
+        server = container.get('server', '')
+        ports = container.get('ports', '')
+        
+        # 提取端口号
+        port_num = None
+        if ports and '->' in ports:
+            try:
+                port_str = ports.split('->')[0].split('/')[0]
+                port_num = int(port_str)
+            except:
+                pass
+        
+        if not port_num:
+            # 根据类型设置默认端口
+            if ctype == 'frontend':
+                port_num = 80
+            elif ctype == 'backend':
+                port_num = 8080
+            elif ctype == 'database':
+                port_num = 3306
+            elif ctype == 'redis':
+                port_num = 6379
+        
+        print(f"[Health Check] 检查服务: {name} ({ctype}) @ {server}:{port_num}")
+        
+        # HTTP健康检查（仅对前端和后端）
+        if ctype in ['frontend', 'backend'] and server and port_num:
+            health_path = '/health' if ctype == 'backend' else '/'
+            health_result = check_http_health(server, port_num, path=health_path, timeout=5)
+            health_results[name] = health_result
+            
+            # 构建HTTP检查输出信息
+            status_code = health_result.get('status_code')
+            response_time = health_result.get('response_time_ms')
+            time_str = f"{response_time}ms" if response_time is not None else "N/A"
+            
+            if status_code:
+                http_info = f"HTTP {status_code} ({health_result['status']}, 耗时: {time_str})"
+            else:
+                http_info = f"{health_result['status']} (耗时: {time_str})"
+            
+            print(f"  健康状态: {http_info}")
+        
+        # 性能指标获取（所有服务）
+        perf_result = get_performance_metrics(name, ssh_host=server)
+        perf_metrics[name] = perf_result
+        if perf_result.get('error'):
+            print(f"  性能指标: ❌ {perf_result['error']}")
+        else:
+            print(f"  性能指标: CPU={perf_result['cpu_percent']}%, MEM={perf_result['memory_percent']}%")
+    
+    # 生成摘要
+    summary_lines = []
+    unhealthy_count = 0
+    
+    # 只检查有HTTP健康检查结果的服务
+    for name, health_result in health_results.items():
+        if health_result['status'] != 'healthy':
+            unhealthy_count += 1
+            if health_result['status'] == 'timeout':
+                summary_lines.append(f"- {name}: ⚠️ HTTP超时（服务可能卡死或过载）")
+            elif health_result['status'] == 'error':
+                summary_lines.append(f"- {name}: ❌ HTTP错误 ({health_result.get('error', '未知')})")
+            else:
+                summary_lines.append(f"- {name}: ⚠️ HTTP异常 (HTTP {health_result.get('status_code', 'N/A')})")
+        else:
+            summary_lines.append(f"- {name}: ✅ 正常 (HTTP {health_result['status_code']})")
+    
+    if unhealthy_count > 0:
+        summary = f"\n【健康检查摘要】\n发现 {unhealthy_count} 个服务HTTP异常\n" + "\n".join(summary_lines)
+    elif health_results:
+        summary = f"\n【健康检查摘要】\n所有HTTP服务运行正常\n" + "\n".join(summary_lines)
+    else:
+        summary = ""
+    
+    return {
+        'health_check_results': health_results,
+        'port_check_results': port_results,
+        'performance_metrics': perf_metrics,
+        'summary': summary
+    }
+
+
+def determine_config_status(servers_config: dict) -> str:
+    """判断配置状态"""
+    configured_count = sum(1 for v in servers_config.values() if v)
+    
+    if configured_count == 0:
+        return "none"
+    elif configured_count < 4:
+        return "partial"
+    else:
+        return "complete"
+
 
 def get_stopped_services(state: DiagnosisState) -> List[str]:
     """获取未启动的服务列表"""
@@ -541,9 +850,11 @@ async def analyze_node(state: DiagnosisState) -> DiagnosisState:
     # === 强制检查最大迭代次数 ===
     if state['iteration_count'] >= state['max_iterations']:
         print(f"[Analyze] [WARN] 已达到最大迭代次数 ({state['max_iterations']}),强制生成报告")
+        print(f"[Analyze] [DEBUG] 清空 next_action (原值: {state.get('next_action')})")
         return {
             **state,
             "current_step": "generate_report",
+            "next_action": None,  # 清空next_action避免混淆
             "actions_taken": state.get('actions_taken', []) + ["force_stop_by_max_iterations"]
         }
     
@@ -700,6 +1011,7 @@ async def analyze_node(state: DiagnosisState) -> DiagnosisState:
 - 服务状态: {'已收集' if state.get('service_status') else '未收集'}
 - MySQL状态: {'已收集' if state.get('mysql_status') else '未收集'}
 - 日志数据: {'已收集' if state.get('logs_data') else '未收集'}
+- 健康检查: {'已执行' if state.get('health_check_results') else '未执行'}
 - 当前日志追溯范围: {state.get('log_search_range_minutes', 0)}分钟
 - 已收集的日志范围: {len(state.get('logs_collected_ranges', []))}个
 - Docker Stats: {'已收集（见下方容器资源使用情况）' if state.get('docker_stats_info') else '未收集'}
@@ -707,48 +1019,38 @@ async def analyze_node(state: DiagnosisState) -> DiagnosisState:
 {state.get('docker_stats_info', '')}
 
 请决定下一步行动（只返回一个行动名称，不要其他内容）：
-1. check_memory - 检查内存使用情况（如果还没有执行过）
-2. check_cpu - 检查CPU使用情况（如果还没有执行过）
-3. check_service - 检查服务运行状态（如果还没有执行过）
-4. check_mysql - 检查MySQL数据库状态（如果还没有执行过）
+1. check_memory - 检查内存使用情况
+2. check_cpu - 检查CPU使用情况
+3. check_service - 检查服务运行状态
+4. check_mysql - 检查MySQL数据库状态
 5. read_logs - 读取或扩大日志追溯范围
-6. read_logs_recent - 读取相关服务的最近10分钟日志（用于交叉验证）
-7. generate_report - 生成诊断报告
+6. read_logs_recent - 读取相关服务的最近10分钟日志
+7. perform_health_check - 执行服务健康检查（HTTP+端口+性能）
+8. generate_report - 生成诊断报告
 
 决策规则（按优先级判断）：
-1. **如果检测到服务完全缺失**（discovered_containers 中有 issue='no_containers' 或 'service_not_found' 的容器）→ **直接 generate_report**
+1. **如果检测到服务完全缺失** → 直接 generate_report
 2. 如果check_memory未执行 → check_memory
 3. 如果check_memory已执行但check_cpu未执行 → check_cpu
-4. 如果内存和CPU都已检查，但check_service未执行 → check_service
-5. 如果核心资源指标已检查：
-   a. 如果还未读取任何日志 → read_logs (首次读取30分钟)
-   b. 如果已读取后端日志但未读取相关服务日志 → read_logs_recent (读取Redis/MySQL等服务的最近10分钟日志)
-   c. 如果已读取日志但范围 < 180分钟，且你认为需要更多信息 → read_logs (扩大范围)
-   d. 如果已有足够信息或达到最大迭代次数 → generate_report
-6. 如果达到最大迭代次数 → generate_report
-
-重要判断逻辑：
-- **先通过内存/CPU/服务状态进行初步判断**
-- 如果资源状态异常(内存紧张/CPU高/服务异常) → 必须读取日志确认根因
-- **如果发现 docker stats 中有容器 CPU > 100% 或 MEM > 80%，这是紧急问题！**
-  - 必须读取该容器的详细日志（至少最近30分钟）
-  - 需要分析日志中是否有错误、警告、慢查询、频繁GC等信息
-  - 需要在报告中明确指出高CPU的根因（如：死循环、频繁GC、数据库连接池耗尽等）
-- 如果后端日志显示其他服务错误 → 使用 read_logs_recent 读取相关服务日志进行交叉验证
-- **日志是诊断的核心依据,不可跳过**
-- **优先关注最近10分钟内的日志，历史日志可能是已解决的问题**
-- **如果服务已被确认缺失（容器不存在），不要再尝试检查该服务，直接生成报告**
+4. 如果核心资源指标已检查但未执行健康检查 → perform_health_check
+5. 如果还未读取任何日志 → read_logs
+6. 如果已读取后端日志但未读取相关服务日志 → read_logs_recent
+7. 如果已有足够信息 → generate_report
 
 重要：
-- **严禁重复执行已执行过的行动**
-- 从“已执行的行动”列表中排除已经做过的
-- **如果某个行动已经连续执行超过2次且没有收集到新信息，立即切换到其他行动或生成报告**
+- **健康检查应该在资源检查之后、日志分析之前执行**
+- 健康检查可以帮助确认服务当前是否真正可用
+- 如果健康检查发现服务不可用，需要在报告中明确指出
+- **⚠️ 重要约束：perform_health_check 只能执行一次！**
+  - 如果已经执行过健康检查（actions_taken 中包含 perform_health_check），不要再选择它
+  - 健康检查只需要执行一次就能获取所有服务的状态
+  - 重复执行健康检查是浪费资源，应该直接进行日志分析或生成报告
 """
     
     response = await llm.ainvoke(prompt)
     next_action = response.content.strip()
     
-    # === 防护机制：检测重复行动 ===
+    # === 防护机制1：检测重复行动 ===
     actions_taken = state.get('actions_taken', [])
     if len(actions_taken) >= 2:
         # 检查最近3次行动是否都是同一个行动
@@ -757,11 +1059,23 @@ async def analyze_node(state: DiagnosisState) -> DiagnosisState:
             print(f"[Analyze] [WARN] 检测到行动 '{next_action}' 已连续执行 {len(recent_actions)} 次，强制切换到 generate_report")
             next_action = "generate_report"
     
+    # === 防护机制2：防止重复执行健康检查 ===
+    if next_action == "perform_health_check":
+        health_check_count = state.get('_health_check_execution_count', 0)
+        if health_check_count >= 1:
+            print(f"[Analyze] [WARN] 健康检查已执行过 {health_check_count} 次，避免重复执行，切换到 read_logs")
+            # 如果已经读取过日志，直接生成报告
+            if state.get('logs_data'):
+                next_action = "generate_report"
+            else:
+                next_action = "read_logs"
+    
     print(f"[Analyze] 决定下一步行动: {next_action}")
     
     return {
         **state,
         "current_step": next_action,
+        "next_action": next_action,  # 同时更新next_action供collect_data_node使用
         "actions_taken": state.get('actions_taken', []) + [next_action]
     }
 
@@ -1198,9 +1512,17 @@ async def collect_data_node(state: DiagnosisState) -> DiagnosisState:
     """
     # === 修复：使用 next_action 而不是 current_step ===
     action = state.get('next_action', state['current_step'])
-    print(f"\n{'='*70}")
-    print(f"[Collect Data] 执行行动: {action}")
-    print(f"{'='*70}")
+    
+    # 追踪 perform_health_check 执行次数
+    if action == "perform_health_check":
+        health_check_count = state.get('_health_check_execution_count', 0) + 1
+        print(f"\n{'='*70}")
+        print(f"[Collect Data] ⚠️  WARNING: perform_health_check 第 {health_check_count} 次执行")
+        print(f"{'='*70}")
+    else:
+        print(f"\n{'='*70}")
+        print(f"[Collect Data] 执行行动: {action}")
+        print(f"{'='*70}")
     
     from Routing.tool_cache import tool_cache
     
@@ -1271,6 +1593,12 @@ async def collect_data_node(state: DiagnosisState) -> DiagnosisState:
                 line_count = log_data.get('line_count', 0)
                 print(f"[Collect Data] 读取到 {line_count} 行日志")
                 
+                # 打印完整日志内容
+                if new_logs and line_count > 0:
+                    print(f"[Collect Data] 后端日志内容 ({line_count}行):")
+                    for line in new_logs.split('\n'):
+                        print(f"  {line}")
+                
                 # === 新增：当日志为空时的处理策略 ===
                 if line_count == 0:
                     print(f"[Collect Data] [WARN] 警告: 最近{new_range}分钟没有日志记录")
@@ -1303,16 +1631,26 @@ async def collect_data_node(state: DiagnosisState) -> DiagnosisState:
                             for svc_container in services_to_read:
                                 svc_name = svc_container.get('name', '')
                                 svc_type = svc_container.get('type', '')
-                                print(f"[Collect Data] 读取 {svc_type} 服务日志 (容器: {svc_name})")
+                                svc_server = svc_container.get('server', '')  # 获取容器所在的服务器
+                                print(f"[Collect Data] 读取 {svc_type} 服务日志 (容器: {svc_name}, 服务器: {svc_server})")
                                 
                                 try:
-                                    svc_result = await read_tool.ainvoke({
+                                    # 构建调用参数
+                                    invoke_params = {
                                         "container_name": svc_name,
                                         "since_time": since,
                                         "until_time": until,
                                         "lines": 200,
                                         "log_level": None
-                                    })
+                                    }
+                                    
+                                    # 如果容器不在默认服务器上，指定ssh_host参数
+                                    default_server = state.get('servers_config', {}).get('backend', {}).get('ssh_host', '')
+                                    if svc_server and svc_server != default_server:
+                                        invoke_params['ssh_host'] = svc_server
+                                        print(f"[Collect Data] [INFO] 切换到服务器: {svc_server}")
+                                    
+                                    svc_result = await read_tool.ainvoke(invoke_params)
                                     
                                     # 解析结果
                                     if isinstance(svc_result, list) and len(svc_result) > 0:
@@ -1330,6 +1668,10 @@ async def collect_data_node(state: DiagnosisState) -> DiagnosisState:
                                         if svc_logs:
                                             combined_logs += f"\n\n--- {svc_type.upper()} 服务日志 ({svc_name}, 最近{new_range}分钟, {svc_line_count}行) ---\n{svc_logs}"
                                             print(f"[Collect Data] {svc_type} 服务日志: {svc_line_count} 行")
+                                            # 打印完整日志内容
+                                            print(f"[Collect Data] {svc_type} 日志内容 ({svc_line_count}行):")
+                                            for line in svc_logs.split('\n'):
+                                                print(f"  {line}")
                                 except Exception as e:
                                     print(f"[Collect Data] 读取 {svc_type} 服务日志失败: {e}")
                             
@@ -1421,6 +1763,10 @@ async def collect_data_node(state: DiagnosisState) -> DiagnosisState:
                                     if service_logs:
                                         combined_logs += f"\n\n--- {service.upper()} 服务日志 (最近10分钟, {service_line_count}行) ---\n{service_logs}"
                                         print(f"[Collect Data] {service} 服务日志: {service_line_count} 行")
+                                        # 打印完整日志内容
+                                        print(f"[Collect Data] {service} 日志内容 ({service_line_count}行):")
+                                        for line in service_logs.split('\n'):
+                                            print(f"  {line}")
                             except Exception as e:
                                 print(f"[Collect Data] 读取 {service} 服务日志失败: {e}")
                 
@@ -1446,9 +1792,17 @@ async def collect_data_node(state: DiagnosisState) -> DiagnosisState:
             for container in discovered:
                 name = container.get('name', '').lower()
                 if 'redis' in name:
-                    services_to_read.append(('redis', container.get('container_name') or name))
+                    services_to_read.append({
+                        'service_name': 'redis',
+                        'container_name': container.get('container_name') or container.get('name'),
+                        'server': container.get('server', '')
+                    })
                 elif 'mysql' in name:
-                    services_to_read.append(('mysql', container.get('container_name') or name))
+                    services_to_read.append({
+                        'service_name': 'mysql',
+                        'container_name': container.get('container_name') or container.get('name'),
+                        'server': container.get('server', '')
+                    })
             
             now = datetime.now()
             since = (now - timedelta(minutes=10)).strftime("%Y-%m-%dT%H:%M:%S")
@@ -1457,16 +1811,28 @@ async def collect_data_node(state: DiagnosisState) -> DiagnosisState:
             combined_logs = state.get('logs_data', '')
             
             # 依次读取各服务日志
-            for service_name, container_name in services_to_read:
-                print(f"[Collect Data] 读取 {service_name} 服务日志 (容器: {container_name})")
+            for svc_info in services_to_read:
+                service_name = svc_info['service_name']
+                container_name = svc_info['container_name']
+                svc_server = svc_info.get('server', '')
+                print(f"[Collect Data] 读取 {service_name} 服务日志 (容器: {container_name}, 服务器: {svc_server})")
                 try:
-                    result = await read_tool.ainvoke({
+                    # 构建调用参数
+                    invoke_params = {
                         "container_name": container_name,
                         "since_time": since,
                         "until_time": until,
                         "lines": 200,
                         "log_level": None
-                    })
+                    }
+                    
+                    # 如果容器不在默认服务器上，指定ssh_host参数
+                    default_server = state.get('servers_config', {}).get('backend', {}).get('ssh_host', '')
+                    if svc_server and svc_server != default_server:
+                        invoke_params['ssh_host'] = svc_server
+                        print(f"[Collect Data] [INFO] 切换到服务器: {svc_server}")
+                    
+                    result = await read_tool.ainvoke(invoke_params)
                     
                     # 解析结果
                     if isinstance(result, list) and len(result) > 0:
@@ -1484,6 +1850,10 @@ async def collect_data_node(state: DiagnosisState) -> DiagnosisState:
                         if service_logs:
                             combined_logs += f"\n\n--- {service_name.upper()} 服务日志 (最近10分钟, {line_count}行) ---\n{service_logs}"
                             print(f"[Collect Data] {service_name} 服务日志: {line_count} 行")
+                            # 打印完整日志内容
+                            print(f"[Collect Data] {service_name} 日志内容 ({line_count}行):")
+                            for line in service_logs.split('\n'):
+                                print(f"  {line}")
                 except Exception as e:
                     print(f"[Collect Data] 读取 {service_name} 服务日志失败: {e}")
             
@@ -1650,6 +2020,36 @@ async def collect_data_node(state: DiagnosisState) -> DiagnosisState:
                     "mysql_status": mysql_status,
                     "iteration_count": state['iteration_count'] + 1
                 }
+    
+    elif action == "perform_health_check":
+        # 执行健康检查
+        print(f"[Collect Data] 执行服务健康检查")
+        
+        try:
+            check_results = await perform_health_checks(state)
+            
+            # 更新健康检查执行计数器
+            health_check_count = state.get('_health_check_execution_count', 0) + 1
+            
+            return {
+                **state,
+                "health_check_results": check_results['health_check_results'],
+                "port_check_results": check_results['port_check_results'],
+                "performance_metrics": check_results['performance_metrics'],
+                "health_check_summary": check_results['summary'],
+                "_health_check_execution_count": health_check_count,  # 记录执行次数
+                "iteration_count": state['iteration_count'] + 1
+            }
+        except Exception as e:
+            print(f"[Collect Data] 健康检查失败: {e}")
+            import traceback
+            traceback.print_exc()
+            
+            return {
+                **state,
+                "health_check_summary": f"健康检查执行失败: {str(e)}",
+                "iteration_count": state['iteration_count'] + 1
+            }
     
     # 如果没有执行任何操作，仍然增加迭代计数
     return {
@@ -1909,6 +2309,228 @@ async def generate_report_node(state: DiagnosisState) -> DiagnosisState:
     mysql_logs = extract_service_logs(logs_data, 'mysql')
     frontend_logs = extract_service_logs(logs_data, 'frontend')
     
+    # === 新增：日志统计分析（帮助LLM更好地理解日志）===
+    def analyze_log_patterns(logs: str, service_name: str) -> str:
+        """分析日志模式，提供统计信息"""
+        if not logs:
+            return f"- {service_name}: 无日志\n"
+        
+        lines = logs.splitlines()
+        total_lines = len(lines)
+        
+        # 统计HTTP状态码
+        status_codes = {}
+        error_count = 0
+        warn_count = 0
+        timeout_count = 0
+        connection_refused = 0
+        upstream_error = 0
+        
+        # 提取客户端IP和请求路径
+        client_ips = {}
+        request_paths = {}
+        
+        for line in lines:
+            # 提取HTTP状态码
+            import re
+            status_match = re.search(r'" (\d{3}) ', line)
+            if status_match:
+                code = status_match.group(1)
+                status_codes[code] = status_codes.get(code, 0) + 1
+            
+            # 提取客户端IP（Nginx日志格式）
+            ip_match = re.match(r'(\d+\.\d+\.\d+\.\d+)', line)
+            if ip_match:
+                ip = ip_match.group(1)
+                client_ips[ip] = client_ips.get(ip, 0) + 1
+            
+            # 提取请求路径
+            path_match = re.search(r'"(GET|POST|PUT|DELETE|PATCH) ([^ ]+)', line)
+            if path_match:
+                path = path_match.group(2)
+                request_paths[path] = request_paths.get(path, 0) + 1
+            
+            # 统计错误类型
+            line_lower = line.lower()
+            if 'error' in line_lower or 'exception' in line_lower:
+                error_count += 1
+            if 'warn' in line_lower:
+                warn_count += 1
+            if 'timeout' in line_lower or 'timed out' in line_lower:
+                timeout_count += 1
+            if 'connection refused' in line_lower:
+                connection_refused += 1
+            if 'upstream' in line_lower and ('error' in line_lower or 'timed out' in line_lower):
+                upstream_error += 1
+        
+        # 构建统计信息
+        stats = f"- {service_name}: {total_lines}行日志\n"
+        if status_codes:
+            stats += f"  HTTP状态码分布: {', '.join([f'{code}({count}次)' for code, count in sorted(status_codes.items())])}\n"
+        if client_ips:
+            top_ips = sorted(client_ips.items(), key=lambda x: x[1], reverse=True)[:5]
+            stats += f"  主要客户端IP: {', '.join([f'{ip}({count}次)' for ip, count in top_ips])}\n"
+        if request_paths:
+            top_paths = sorted(request_paths.items(), key=lambda x: x[1], reverse=True)[:5]
+            stats += f"  高频请求路径: {', '.join([f'{path}({count}次)' for path, count in top_paths])}\n"
+        if error_count > 0:
+            stats += f"  错误/异常: {error_count}条\n"
+        if warn_count > 0:
+            stats += f"  警告: {warn_count}条\n"
+        if timeout_count > 0:
+            stats += f"  超时: {timeout_count}条\n"
+        if connection_refused > 0:
+            stats += f"  连接拒绝: {connection_refused}条\n"
+        if upstream_error > 0:
+            stats += f"  上游服务错误: {upstream_error}条\n"
+        
+        return stats
+    
+    log_statistics = "\n【日志统计分析】\n"
+    log_statistics += analyze_log_patterns(frontend_logs, '前端')
+    log_statistics += analyze_log_patterns(backend_logs, '后端')
+    log_statistics += analyze_log_patterns(redis_logs, 'Redis')
+    log_statistics += analyze_log_patterns(mysql_logs, 'MySQL')
+    
+    # === 新增：整合健康检查结果到当前状态验证 ===
+    health_summary = state.get('health_check_summary', '')
+    health_results = state.get('health_check_results', {})
+    port_results = state.get('port_check_results', {})
+    perf_metrics = state.get('performance_metrics', {})
+    
+    if health_summary:
+        # 如果有健康检查结果，将其添加到当前状态报告中
+        current_status_report = health_summary
+        
+        # 添加详细的性能指标
+        if perf_metrics:
+            current_status_report += "\n\n【性能指标详情】\n"
+            for service_name, metrics in perf_metrics.items():
+                if not metrics.get('error'):
+                    current_status_report += f"- {service_name}: CPU={metrics['cpu_percent']}%, 内存={metrics['memory_percent']}% ({metrics['memory_usage_mb']:.1f}MB/{metrics['memory_limit_mb']:.1f}MB)\n"
+                else:
+                    current_status_report += f"- {service_name}: ❌ 无法获取性能指标 ({metrics['error']})\n"
+    else:
+        # 如果没有健康检查结果，使用原有的日志分析方式
+        # === 新增：当前状态验证（检查问题是否仍然存在）===
+        def check_current_status(logs: str, service_name: str) -> dict:
+            """
+            检查当前服务状态（基于最近5分钟的日志）
+            返回：是否有活跃问题、问题类型、证据
+            """
+            if not logs:
+                return {
+                    'has_active_issue': False,
+                    'issue_type': None,
+                    'evidence': '无日志数据'
+                }
+            
+            lines = logs.splitlines()
+            if not lines:
+                return {
+                    'has_active_issue': False,
+                    'issue_type': None,
+                    'evidence': '日志为空'
+                }
+            
+            # 提取时间戳（假设格式为 [19/May/2026:12:40:01 +0800] 或 2026-05-19 12:40:01）
+            import re
+            from datetime import datetime, timedelta
+            
+            current_time = datetime.now()
+            five_minutes_ago = current_time - timedelta(minutes=5)
+            
+            recent_lines = []
+            error_in_recent = []
+            timeout_in_recent = []
+            
+            for line in lines:
+                # 尝试提取时间戳
+                time_match = re.search(r'\[(\d{2}/\w{3}/\d{4}:\d{2}:\d{2}:\d{2})', line)
+                if not time_match:
+                    time_match = re.search(r'(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})', line)
+                
+                if time_match:
+                    try:
+                        # 解析时间
+                        time_str = time_match.group(1)
+                        if '/' in time_str:
+                            log_time = datetime.strptime(time_str, '%d/%b/%Y:%H:%M:%S')
+                        else:
+                            log_time = datetime.strptime(time_str, '%Y-%m-%d %H:%M:%S')
+                        
+                        # 检查是否在最近5分钟内
+                        # 注意：这里简化处理，实际应该考虑时区
+                        recent_lines.append(line)
+                        
+                        line_lower = line.lower()
+                        if 'error' in line_lower or 'exception' in line_lower:
+                            error_in_recent.append(line)
+                        if 'timeout' in line_lower or 'timed out' in line_lower:
+                            timeout_in_recent.append(line)
+                    except:
+                        # 时间解析失败，仍然计入
+                        recent_lines.append(line)
+                else:
+                    # 没有时间戳的行，也计入
+                    recent_lines.append(line)
+            
+            # 判断是否有活跃问题
+            has_active_issue = len(error_in_recent) > 0 or len(timeout_in_recent) > 0
+            
+            if has_active_issue:
+                issue_types = []
+                evidence = []
+                
+                if timeout_in_recent:
+                    issue_types.append('超时错误')
+                    evidence.extend(timeout_in_recent[:3])  # 最多取3条证据
+                
+                if error_in_recent:
+                    issue_types.append('异常错误')
+                    evidence.extend([e for e in error_in_recent[:3] if e not in timeout_in_recent])
+                
+                return {
+                    'has_active_issue': True,
+                    'issue_type': ', '.join(issue_types),
+                    'evidence': '\n'.join(evidence[:5])  # 最多5条证据
+                }
+            else:
+                return {
+                    'has_active_issue': False,
+                    'issue_type': None,
+                    'evidence': f'最近日志中未发现活跃问题（共{len(recent_lines)}行）'
+                }
+        
+        # 执行当前状态验证
+        frontend_status = check_current_status(frontend_logs, '前端')
+        backend_status = check_current_status(backend_logs, '后端')
+        redis_status = check_current_status(redis_logs, 'Redis')
+        mysql_status = check_current_status(mysql_logs, 'MySQL')
+        
+        # 构建当前状态报告
+        current_status_report = "\n\n【当前状态验证（最近5分钟）】\n"
+        current_status_report += f"- 前端服务: {'❌ 存在活跃问题 (' + frontend_status['issue_type'] + ')' if frontend_status['has_active_issue'] else '✅ 正常运行'}\n"
+        if frontend_status['has_active_issue']:
+            current_status_report += f"  证据: {frontend_status['evidence'][:200]}...\n" if len(frontend_status['evidence']) > 200 else f"  证据: {frontend_status['evidence']}\n"
+        
+        current_status_report += f"- 后端服务: {'❌ 存在活跃问题 (' + backend_status['issue_type'] + ')' if backend_status['has_active_issue'] else '✅ 正常运行'}\n"
+        if backend_status['has_active_issue']:
+            current_status_report += f"  证据: {backend_status['evidence'][:200]}...\n" if len(backend_status['evidence']) > 200 else f"  证据: {backend_status['evidence']}\n"
+        
+        current_status_report += f"- Redis服务: {'❌ 存在活跃问题 (' + redis_status['issue_type'] + ')' if redis_status['has_active_issue'] else '✅ 正常运行'}\n"
+        current_status_report += f"- MySQL服务: {'❌ 存在活跃问题 (' + mysql_status['issue_type'] + ')' if mysql_status['has_active_issue'] else '✅ 正常运行'}\n"
+        
+        # 总体状态
+        any_active_issue = any([
+            frontend_status['has_active_issue'],
+            backend_status['has_active_issue'],
+            redis_status['has_active_issue'],
+            mysql_status['has_active_issue']
+        ])
+        
+        current_status_report += f"\n**总体状态**: {'⚠️ 发现活跃问题，需要立即处理' if any_active_issue else '✅ 所有服务当前运行正常'}\n"
+    
     # === 新增：检查可疑容器和日志空值情况 ===
     discovered = state.get('discovered_containers') or []  # 防止 None 值
     suspicious_containers = [c for c in discovered if c.get('issue') == 'suspicious_container']
@@ -2072,6 +2694,10 @@ async def generate_report_node(state: DiagnosisState) -> DiagnosisState:
 
 {log_collection_status}
 
+{log_statistics}
+
+{current_status_report}
+
 {service_status_detail}
 
 {docker_stats_info}
@@ -2083,7 +2709,7 @@ async def generate_report_node(state: DiagnosisState) -> DiagnosisState:
 - 后端日志行数: {len(backend_logs.splitlines()) if backend_logs else 0}
 - 前端日志行数: {len(frontend_logs.splitlines()) if frontend_logs else 0}
 - Redis日志行数: {len(redis_logs.splitlines()) if redis_logs else 0}
-- MySQL日志行数: {len(mysql_logs.splitlines()) if mysql_logs else 0}{container_status_info}{log_empty_warning}
+- MySQL日志行数: {len(mysql_logs.splitlines()) if mysql_logs else 0}{log_statistics}{container_status_info}{log_empty_warning}
 
 【应用启动状态分析】
 - 后端容器状态: {next((c.get('status', 'unknown') for c in discovered if c.get('type') == 'backend'), '未找到')}
@@ -2091,11 +2717,56 @@ async def generate_report_node(state: DiagnosisState) -> DiagnosisState:
 - 是否有正常业务日志: {'是' if backend_logs and ('登录成功' in backend_logs or 'Success' in backend_logs or 'exec-' in backend_logs) else '否'}
 
 **重要提示**：
-- 如果“是否包含启动成功标志”为“是”，且“是否有正常业务日志”为“是”，说明应用已经成功启动并正常运行
-- 在这种情况下，即使日志中有历史错误（如启动时的 "Too many connections"），也应该标记为“已恢复的历史问题”，而不是“当前活跃问题”
+- 如果"是否包含启动成功标志"为"是"，且"是否有正常业务日志"为"是"，说明应用已经成功启动并正常运行
+- 在这种情况下，即使日志中有历史错误（如启动时的 "Too many connections"），也应该标记为"已恢复的历史问题"，而不是"当前活跃问题"
+
+**健康检查数据使用说明**：
+- 【健康检查摘要】提供了所有服务的实时健康状态（HTTP响应、端口连通性）
+- 【性能指标详情】提供了各服务的CPU和内存使用情况
+- **如果健康检查发现某个服务HTTP异常或超时，这通常是当前活跃问题的强证据**
+- **判断问题类型的关键**：
+  - 如果健康检查显示服务异常（timeout/error/unreachable）→ 很可能是"当前活跃问题"
+  - 如果健康检查显示服务正常，但历史日志有错误 → 可能是"已恢复的历史问题"
+  - 结合日志时间戳：最近5分钟内的错误 + 健康检查异常 = 当前活跃问题
 
 【交叉验证指南】
 请对每个潜在问题进行多维度验证（至少2个证据源一致才确认为当前问题）：
+
+**重要：日志深度分析要求**
+在分析日志时，必须执行以下步骤：
+1. **时间线分析**: 按时间顺序梳理事件，识别问题发生的时间点
+2. **模式识别**: 找出异常模式（如：特定IP的请求失败、特定时间段集中出错）
+3. **对比分析**: 对比成功请求和失败请求的差异（客户端IP、请求路径、时间等）
+4. **根因推断**: 基于以上分析，推断可能的根本原因
+5. **交叉验证**: 结合其他服务的日志确认推断
+6. **统计分析利用**: 充分利用上面提供的【日志统计分析】数据，特别关注：
+   - HTTP状态码分布中是否有大量5xx错误
+   - 主要客户端IP是否与错误请求的IP一致
+   - 高频请求路径是否是出问题的接口
+   - 超时/上游错误的数量是否显著
+
+**示例分析流程**:
+```
+前端日志分析:
+- 12:15:08 - 正常访问 (200) ← 来自扫描器
+- 12:39:45 - 正常访问 (304) ← 来自 220.154.1.3
+- 12:40:01 - ❌ 超时 (504) ← 来自 220.154.1.3, 请求 /prod-api/getInfo
+- 12:40:11 - ❌ 超时 (504) ← 来自 220.154.1.3, 请求 /prod-api/logout
+
+发现:
+- 只有 220.154.1.3 的 /prod-api/* 请求超时
+- 其他IP的请求都成功
+- 2个超时发生在10秒内
+
+推断:
+- 可能是后端服务在 12:40 左右处理 /prod-api 请求时出现问题
+- 需要检查后端日志中 12:39-12:41 期间的记录
+
+交叉验证:
+- 查看后端日志中 12:40 左右的记录
+- 检查MySQL/Redis在该时间段是否有异常
+- 确认是否为网络问题还是应用逻辑问题
+```
 
 1. **前端服务问题验证**:
    - 证据1: 容器发现状态 → {('ruoyi-frontend' in container_status_table and '✓ 正常' in container_status_table) if 'ruoyi-frontend' in container_status_table else '未找到'}
@@ -2119,8 +2790,18 @@ async def generate_report_node(state: DiagnosisState) -> DiagnosisState:
    - 证据1: check_memory/check_cpu 状态
    - 证据2: 应用日志中的 OOM/性能错误
    - 证据3: docker stats 显示的 CPU/内存使用率
+   - 证据4: 【性能指标详情】中的实时指标
    - 判定: 如果 docker stats 显示 CPU > 100%，必须检查应用日志中是否有相关错误（如线程阻塞、死循环、频繁GC等）
-   - **重要**: 在报告中描述高CPU问题时，必须引用日志证据，例如："通过查询容器 ruoyi-app 的日志发现 XXX 错误，导致 CPU 使用率达到 180%"
+   - **重要**: 在报告中描述高CPU问题时，必须引用日志证据，例如：“通过查询容器 ruoyi-app 的日志发现 XXX 错误，导致 CPU 使用率达到 180%”
+
+5. **健康检查数据验证（新增）**:
+   - 证据1: 【健康检查摘要】中的HTTP状态和端口连通性
+   - 证据2: 【性能指标详情】中的CPU和内存使用率
+   - 证据3: 历史日志中的错误信息
+   - **判定规则**:
+     - 如果健康检查显示 HTTP timeout/error → 确认为“当前活跃问题”，必须在报告中明确指出
+     - 如果健康检查显示所有服务正常，但历史日志有错误 → 标记为“已恢复的历史问题”
+     - 如果某个服务的性能指标异常（CPU>90%或MEM>90%），结合日志确认是否为当前问题
 
 【时间维度判断】
 - **优先关注最近10分钟内的日志**：这些反映当前问题
@@ -2131,12 +2812,18 @@ async def generate_report_node(state: DiagnosisState) -> DiagnosisState:
 1. 如果错误发生在应用启动阶段，但应用最终启动成功 → 标记为“已恢复的历史问题”
 2. 如果服务当前状态正常（容器运行中、端口可访问）→ 即使有历史错误，也标记为“已恢复”
 3. 如果最近10分钟内没有相同错误，且服务正常运行 → 标记为“已恢复的历史问题”
-4. 只有当错误持续出现且服务状态异常时，才标记为“当前活跃问题”
+4. **只有当错误持续出现且健康检查显示服务异常时，才标记为“当前活跃问题”**
+5. **健康检查是判断当前状态的权威依据**：
+   - HTTP timeout/error → 当前活跃问题
+   - 端口不可达 → 当前活跃问题
+   - HTTP healthy + 历史日志错误 → 已恢复的历史问题
 
 **示例**：
 - 场景1: 启动时出现 "Too many connections"，但应用最终启动成功且有正常业务日志 → 已恢复的历史问题
 - 场景2: 最近10分钟内持续出现 "Too many connections"，且应用无法响应 → 当前活跃问题
 - 场景3: MySQL 容器状态为 healthy，后端日志中有历史连接错误但最近无错误 → 已恢复的历史问题
+- **场景4（新增）**: 健康检查显示 ruoyi-app HTTP timeout，前端日志有504错误 → **当前活跃问题**，根因是后端服务超时
+- **场景5（新增）**: 健康检查显示所有服务HTTP healthy，但历史日志有timeout错误 → **已恢复的历史问题**，服务已自动恢复
 
 【重要要求】
 1. 严格基于上述真实数据，不要编造信息
@@ -2152,6 +2839,8 @@ async def generate_report_node(state: DiagnosisState) -> DiagnosisState:
    - "通过查询容器 ruoyi-app 的日志发现 XXX 错误，导致 CPU 使用率达到 180%"
    - "从后端日志中发现 MySQL 连接超时错误（最近10分钟内出现3次）"
    - "前端日志显示服务启动失败，错误信息: XXX"
+   - "前端日志统计分析显示，主要客户端IP为 220.154.1.3，该IP的请求全部返回504错误"
+   - "高频请求路径 /prod-api/* 出现超时，需要检查该接口的性能"
 6. **只输出Markdown格式的诊断报告，不要添加任何额外的解释、总结或说明文字**
 7. **不要在```markdown代码块之外添加任何内容**
 8. 输出必须简洁明了，避免重复
@@ -2163,14 +2852,33 @@ async def generate_report_node(state: DiagnosisState) -> DiagnosisState:
    - 最高优先级: 实际日志读取结果（能读到日志 = 容器存在）
    - 次高优先级: 容器发现阶段的 docker ps 结果
    - 较低优先级: 工具调用过程中的临时错误信息
+11. **充分利用日志统计分析**: 在分析问题时，必须参考上面提供的【日志统计分析】数据:
+   - 如果HTTP状态码中有大量5xx错误 → 说明服务端存在问题
+   - 如果某个IP的请求全部失败而其他IP正常 → 可能是特定客户端或网络问题
+   - 如果特定路径的请求频繁超时 → 该接口可能存在性能瓶颈或逻辑错误
+   - 如果上游错误数量较多 → 需要检查后端服务的健康状态
+12. **明确区分历史问题和当前活跃问题**:
+   - **关键步骤**: 必须参考【当前状态验证（最近5分钟）】的结果
+   - 如果当前状态验证显示“✅ 正常运行” → 将问题归类为“已恢复的历史问题”
+   - 如果当前状态验证显示“❌ 存在活跃问题” → 将问题归类为“当前活跃问题”，并在“问题根因”中明确指出
+   - **示例**:
+     ```
+     场景1: 历史日志有超时错误，但当前状态验证显示“✅ 所有服务当前运行正常”
+     → 报告: “系统未发现当前错误。从历史日志来看曾发生 XXX 错误，但应用已重启成功...”
+     
+     场景2: 历史日志有超时错误，且当前状态验证显示“❌ 前端服务: 存在活跃问题 (超时错误)”
+     → 报告: “当前仍存在超时问题。前端服务在最近5分钟内出现 X 次超时错误...”
+     ```
 
 【输出格式要求】
 请严格按照以下 Markdown 格式输出诊断报告，不要添加任何额外说明或示例文字：
 
 ```markdown
 ## 问题根因
-（如果系统正常，写："系统未发现错误。从历史日志来看曾发生 XXX 错误，但应用已重启成功，各项配置均正常运行。证据：XXX"）
-（如果有当前活跃问题，列出具体问题）
+（如果系统正常，写：“系统未发现当前错误。从历史日志来看曾发生 XXX 错误，但应用已重启成功，各项配置均正常运行。证据：XXX”）
+（如果有当前活跃问题，列出具体问题，并引用【当前状态验证】中的证据）
+
+**重要**: 必须明确说明问题是“当前活跃”还是“已恢复的历史问题”
 
 ## 已恢复的历史问题
 （列出历史问题，如果没有则省略此节）
@@ -2228,7 +2936,8 @@ def route_after_analyze(state: DiagnosisState) -> str:
     action = state['current_step']
     next_action = state.get('next_action', '')
     
-    print(f"[Route] [DEBUG] current_step: {action}, next_action: {next_action}")
+    # current_step 实际上是 analyze_node 决定的"下一步行动"
+    print(f"[Route] [DEBUG] next_action: {next_action}")
     
     # === 新增:配置错误和服务未启动的快速路由 ===
     if action == "error_no_config":
@@ -2242,11 +2951,11 @@ def route_after_analyze(state: DiagnosisState) -> str:
         return "generate_report"
     
     # === 修复：检查 next_action 而不是 current_step ===
-    if next_action in ["read_logs", "check_memory", "check_cpu", "check_service", "check_mysql"]:
+    if next_action in ["read_logs", "check_memory", "check_cpu", "check_service", "check_mysql", "perform_health_check"]:
         return "collect_data"
     
     # 兼容旧逻辑：如果 current_step 是行动名称
-    if action in ["read_logs", "check_memory", "check_cpu", "check_service", "check_mysql"]:
+    if action in ["read_logs", "check_memory", "check_cpu", "check_service", "check_mysql", "perform_health_check"]:
         return "collect_data"
     
     # 默认生成报告
@@ -2257,6 +2966,8 @@ def route_after_collect(state: DiagnosisState) -> str:
     """数据收集后回到分析节点"""
     if state['iteration_count'] >= state['max_iterations']:
         print(f"[Route] 达到最大迭代次数，生成报告")
+        # 注意：这里只返回路由目标，不清空state
+        # analyze_node会在达到最大迭代次数时清空next_action
         return "generate_report"
     return "analyze"
 
@@ -2347,7 +3058,9 @@ async def run_diagnosis(
         "config_status": config_status,
         "servers_config": servers_config,
         "discovered_containers": [],
-        "service_status_summary": ""
+        "service_status_summary": "",
+        # 内部调试字段
+        "_health_check_execution_count": 0  # 健康检查执行次数计数器
     }
     
     try:

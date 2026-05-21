@@ -55,8 +55,62 @@ mcp = FastMCP("Log Reader MCP Server")
 # ===== 辅助函数 =====
 
 def _get_ssh_connection() -> paramiko.SSHClient:
-    """建立SSH连接"""
+    """建立SSH连接（使用默认配置）"""
+    return _get_ssh_connection_for_host(None)
+
+
+def _get_ssh_connection_for_host(target_host: Optional[str] = None) -> paramiko.SSHClient:
+    """
+    建立SSH连接
+    
+    Args:
+        target_host: 目标主机地址，如果为None则使用默认配置
+    """
     try:
+        # 如果指定了目标主机，需要查找对应的配置
+        if target_host:
+            # 从环境变量中查找对应服务器的配置
+            from dotenv import dotenv_values
+            import os
+            
+            env_file = os.path.join(os.path.dirname(os.path.dirname(__file__)), '.env')
+            config = dotenv_values(env_file, encoding='utf-8')
+            
+            # 查找匹配的服务器配置
+            host_key = None
+            user_key = None
+            port_key = None
+            key_path = None
+            
+            # 检查是否是前端服务器
+            if target_host == config.get('FRONTEND_SSH_HOST'):
+                host_key = 'FRONTEND_SSH_HOST'
+                user_key = 'FRONTEND_SSH_USER'
+                port_key = 'FRONTEND_SSH_PORT'
+                key_path = config.get('FRONTEND_SSH_KEY_PATH', '')
+            # 否则使用后端服务器配置
+            else:
+                host_key = 'BACKEND_SSH_HOST' or 'SSH_HOST'
+                user_key = 'BACKEND_SSH_USER' or 'SSH_USER'
+                port_key = 'BACKEND_SSH_PORT' or 'SSH_PORT'
+                key_path = config.get('BACKEND_SSH_KEY_PATH', '') or config.get('SSH_KEY_PATH', './aiOps.pem')
+            
+            ssh_host = config.get(host_key, target_host)
+            ssh_port = int(config.get(port_key, '22'))
+            ssh_user = config.get(user_key, 'root')
+            
+            # 如果是相对路径，转换为绝对路径
+            if not os.path.isabs(key_path):
+                key_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), key_path)
+            
+            logger.info(f"[SSH] Using custom host: {ssh_host}")
+        else:
+            # 使用默认配置
+            ssh_host = ssh_config["host"]
+            ssh_port = ssh_config["port"]
+            ssh_user = ssh_config["username"]
+            key_path = ssh_config["key_file"]
+        
         # 尝试加载不同类型的SSH密钥
         private_key = None
         key_types = [
@@ -67,25 +121,25 @@ def _get_ssh_connection() -> paramiko.SSHClient:
         
         for key_type in key_types:
             try:
-                private_key = key_type.from_private_key_file(ssh_config["key_file"])
+                private_key = key_type.from_private_key_file(key_path)
                 break
             except paramiko.SSHException:
                 continue
         
         if private_key is None:
-            raise Exception(f"无法识别的密钥格式: {ssh_config['key_file']}")
+            raise Exception(f"无法识别的密钥格式: {key_path}")
         
         ssh_client = paramiko.SSHClient()
         ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
         ssh_client.connect(
-            hostname=ssh_config["host"],
-            port=ssh_config["port"],
-            username=ssh_config["username"],
+            hostname=ssh_host,
+            port=ssh_port,
+            username=ssh_user,
             pkey=private_key,
             timeout=30
         )
         
-        logger.info(f"[SSH] Connected to {ssh_config['host']}")
+        logger.info(f"[SSH] Connected to {ssh_host}")
         return ssh_client
     
     except Exception as e:
@@ -125,7 +179,8 @@ def read_docker_logs(
     lines: int = 100,
     since_time: Optional[str] = None,
     until_time: Optional[str] = None,
-    log_level: Optional[List[str]] = None  # 默认不过滤，返回所有日志
+    log_level: Optional[List[str]] = None,  # 默认不过滤，返回所有日志
+    ssh_host: Optional[str] = None  # 可选：指定SSH主机，默认为.env中配置的BACKEND_SSH_HOST
 ) -> dict:
     """
     通过SSH读取远程Docker容器日志
@@ -136,6 +191,7 @@ def read_docker_logs(
         since_time: 起始时间（ISO 8601格式，如"2024-01-15T10:30:00"或相对时间如"30m"、"1h"）
         until_time: 结束时间（ISO 8601格式，默认为当前时间）
         log_level: 日志级别过滤列表（默认None表示不过滤，传入["ERROR", "WARN"]则只返回错误和警告）
+        ssh_host: SSH主机地址（可选，默认使用.env中的BACKEND_SSH_HOST配置）
     
     Returns:
         包含日志内容和元数据的字典
@@ -143,6 +199,8 @@ def read_docker_logs(
     logger.info(f"\n[Read Logs] Container: {container_name}")
     logger.info(f"[Read Logs] Lines: {lines}, Since: {since_time}, Until: {until_time}")
     logger.info(f"[Read Logs] Log Level Filter: {log_level}")
+    if ssh_host:
+        logger.info(f"[Read Logs] Target SSH Host: {ssh_host}")
     
     try:
         # 构建docker logs命令
@@ -155,18 +213,21 @@ def read_docker_logs(
         
         logger.info(f"[Read Logs] Executing: {cmd}")
         
-        # SSH执行
-        ssh_client = _get_ssh_connection()
+        # SSH执行（根据ssh_host参数选择目标服务器）
+        ssh_client = _get_ssh_connection_for_host(ssh_host)
         stdin, stdout, stderr = ssh_client.exec_command(cmd)
         raw_logs = stdout.read().decode('utf-8')
         error_output = stderr.read().decode('utf-8')
         ssh_client.close()
         
-        # 检查错误
-        if error_output and "error" in error_output.lower():
+        # 检查错误（同时检查stdout和stderr）
+        combined_output = raw_logs + error_output
+        if "Error response from daemon" in combined_output or \
+           (error_output and "error" in error_output.lower()):
+            logger.error(f"[Read Logs] Docker command failed: {combined_output}")
             return {
                 "status": "error",
-                "message": f"Docker命令执行失败: {error_output}"
+                "message": f"Docker命令执行失败: {combined_output.strip()}"
             }
         
         # 过滤日志级别
