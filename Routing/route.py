@@ -19,9 +19,9 @@ from Routing.amap import create_amap_agent
 from Routing.rag_agent import create_rag_agent
 
 # 导入缓存和会话管理器
-from Routing.tool_cache import tool_cache
-from Routing.conversation_manager import conversation_manager
-from Routing.ssh_tunnel_manager import SSHTunnelManager
+from utils.tool_cache import tool_cache
+from utils.conversation_manager import conversation_manager
+from utils.ssh_tunnel_manager import SSHTunnelManager
 
 # 加载环境变量
 from dotenv import load_dotenv
@@ -389,7 +389,7 @@ async def initialize_redis_and_tunnel():
     if not tunnel_success:
         print("[警告] SSH 隧道创建失败，将尝试直接连接 Redis")
         # 如果有捕获的错误详情，输出详细信息
-        from Routing.ssh_tunnel_manager import error_capture
+        from utils.ssh_tunnel_manager import error_capture
         if error_capture and error_capture.last_error:
             print(f"详细:\n{error_capture.last_error}")
 
@@ -405,7 +405,7 @@ async def initialize_redis_and_tunnel():
     # 这里我们通过修改全局实例的方式来实现
     conversation_manager.use_redis = True
     try:
-        from Routing.redis_session_store import RedisSessionStore
+        from utils.redis_session_store import RedisSessionStore
         conversation_manager.redis_store = RedisSessionStore(**redis_config)
         print("[ConversationManager] Redis 持久化已启用")
     except Exception as e:
@@ -427,7 +427,7 @@ async def chat_with_session(user_input: str, session_id: Optional[str] = None, r
     Returns:
         包含回复和会话信息的字典
     """
-    from Routing.tool_cache import tool_cache
+    from utils.tool_cache import tool_cache
     
     # 如果没有提供会话 ID，创建新会话
     if session_id is None:

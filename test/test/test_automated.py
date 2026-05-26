@@ -1,5 +1,5 @@
 """
-自动化测试脚本 - 模拟用户输入
+自动化测试脚�?- 模拟用户输入
 """
 import asyncio
 import sys
@@ -10,16 +10,16 @@ from unittest.mock import patch
 sys.path.insert(0, '.')
 
 async def automated_test():
-    """自动化测试天气查询"""
+    """自动化测试天气查�?""
     from Routing.route import chat_with_session, cleanup_all
     
     print("=" * 70)
-    print("自动化测试 - 天气查询")
+    print("自动化测�?- 天气查询")
     print("=" * 70)
     
     test_cases = [
         ("北京的天气怎么样？", "测试1: 查询北京天气"),
-        ("上海明天会下雨吗？", "测试2: 查询上海天气"),
+        ("上海明天会下雨吗�?, "测试2: 查询上海天气"),
         ("今天气温多少度？", "测试3: 追问气温"),
     ]
     
@@ -39,12 +39,12 @@ async def automated_test():
             if result["cache_stats"]["cache_count"] > 0:
                 print(f"   📦 [工具缓存命中: {result['cache_stats']['cache_count']} 个服务器]")
         else:
-            print(f"❌ 错误: {result['response']}")
+            print(f"�?错误: {result['response']}")
     
     # 清理
     await cleanup_all()
     print("\n" + "=" * 70)
-    print("测试完成！")
+    print("测试完成�?)
     print("=" * 70)
 
 if __name__ == "__main__":

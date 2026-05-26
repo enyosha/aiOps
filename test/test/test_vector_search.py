@@ -1,5 +1,5 @@
 """
-直接测试ChromaDB向量检索功能
+直接测试ChromaDB向量检索功�?
 """
 import sys
 import os
@@ -11,10 +11,10 @@ load_dotenv()
 DASHSCOPE_API_KEY = os.getenv("DASHSCOPE_API_KEY")
 
 print("=" * 70)
-print("ChromaDB向量检索测试")
+print("ChromaDB向量检索测�?)
 print("=" * 70)
 
-# 初始化向量存储
+# 初始化向量存�?
 print("\n1. 加载向量存储...")
 from langchain_chroma import Chroma
 from langchain_community.embeddings import DashScopeEmbeddings
@@ -32,13 +32,13 @@ vector_store = Chroma(
     collection_name="knowledge_base"
 )
 
-print(f"   向量库路径: {PERSIST_DIRECTORY}")
+print(f"   向量库路�? {PERSIST_DIRECTORY}")
 print("   加载成功!")
 
 # 测试查询
 test_queries = [
-    "2025年人工智能发展趋势",
-    "大聪明牌口服液功效",
+    "2025年人工智能发展趋�?,
+    "大聪明牌口服液功�?,
     "糖尿病的治疗方法"
 ]
 
@@ -48,12 +48,12 @@ for query in test_queries:
         results = vector_store.similarity_search_with_score(query, k=3)
 
         if not results:
-            print("   未找到相关结果")
+            print("   未找到相关结�?)
             continue
 
-        print(f"   找到 {len(results)} 个相关文档:")
+        print(f"   找到 {len(results)} 个相关文�?")
         for i, (doc, score) in enumerate(results, 1):
-            print(f"\n   结果 {i} (相似度分数: {score:.4f}):")
+            print(f"\n   结果 {i} (相似度分�? {score:.4f}):")
             print(f"   来源: {doc.metadata.get('source', 'unknown')}")
             content_preview = doc.page_content[:150].replace('\n', ' ')
             print(f"   内容: {content_preview}...")

@@ -1,5 +1,5 @@
 """
-测试 diagnosis_agent 的完整工作流程
+测试 diagnosis_agent 的完整工作流�?
 模拟 Client_test.py 中的 diag 命令调用
 """
 import asyncio
@@ -17,17 +17,17 @@ from datetime import datetime
 
 
 async def test_frontend_issue():
-    """测试前端无法加载页面的诊断场景"""
+    """测试前端无法加载页面的诊断场�?""
     print("=" * 70)
     print("测试场景: 前端无法加载页面")
     print("=" * 70)
     
-    # 构造告警事件（模拟用户输入）
+    # 构造告警事件（模拟用户输入�?
     alert_event = {
         "alert_name": "前端访问异常",
         "alert_type": "frontend_error",
         "alert_time": datetime.now().isoformat(),
-        "description": "服务有问题,前端无法加载页面"
+        "description": "服务有问�?前端无法加载页面"
     }
     
     print(f"\n📋 告警信息:")
@@ -48,32 +48,32 @@ async def test_frontend_issue():
     print("=" * 70)
     
     if result["status"] == "success":
-        print(f"\n✅ 诊断完成")
+        print(f"\n�?诊断完成")
         print(f"\n📋 诊断报告:\n")
         print(result['diagnosis']['content'])
         
         print("\n" + "=" * 70)
         print(f"迭代次数: {result.get('iteration_count', 'N/A')}")
         data_collected = result.get('data_collected', {})
-        print(f"数据收集状态:")
-        print(f"  - 日志: {'✓' if data_collected.get('logs') else '✗'}")
-        print(f"  - 内存: {'✓' if data_collected.get('memory') else '✗'}")
-        print(f"  - CPU: {'✓' if data_collected.get('cpu') else '✗'}")
-        print(f"  - 服务状态: {'✓' if data_collected.get('service_status') else '✗'}")
+        print(f"数据收集状�?")
+        print(f"  - 日志: {'�? if data_collected.get('logs') else '�?}")
+        print(f"  - 内存: {'�? if data_collected.get('memory') else '�?}")
+        print(f"  - CPU: {'�? if data_collected.get('cpu') else '�?}")
+        print(f"  - 服务状�? {'�? if data_collected.get('service_status') else '�?}")
         
-        # 显示配置状态
+        # 显示配置状�?
         diagnosis = result.get('diagnosis', {})
         if diagnosis.get('stopped_services'):
             print(f"\n⚠️  未启动的服务: {diagnosis['stopped_services']}")
         
         print("=" * 70)
     else:
-        print(f"\n❌ 诊断失败")
+        print(f"\n�?诊断失败")
         print(f"错误信息: {result.get('message', '未知错误')}")
         print("=" * 70)
 
 
 if __name__ == "__main__":
-    print("\n开始测试 diagnosis_agent 工作流程\n")
+    print("\n开始测�?diagnosis_agent 工作流程\n")
     asyncio.run(test_frontend_issue())
     print("\n测试完成！\n")

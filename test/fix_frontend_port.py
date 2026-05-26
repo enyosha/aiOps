@@ -19,7 +19,7 @@ ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
 key = paramiko.RSAKey.from_private_key_file(ssh_key_path)
 ssh.connect(ssh_host, ssh_port, ssh_user, pkey=key)
 
-print("停止并删除当前容器...")
+print("停止并删除当前容�?..")
 ssh.exec_command('docker stop ruoyi-frontend')
 time.sleep(2)
 ssh.exec_command('docker rm ruoyi-frontend')
@@ -32,13 +32,13 @@ output = stdout.read().decode().strip()
 error = stderr.read().decode().strip()
 
 if output:
-    print(f"✅ 容器已启动: {output[:20]}")
+    print(f"�?容器已启�? {output[:20]}")
 if error:
-    print(f"❌ 错误: {error}")
+    print(f"�?错误: {error}")
 
 time.sleep(5)
 
-print("\n验证容器状态...")
+print("\n验证容器状�?..")
 stdin, stdout, stderr = ssh.exec_command('docker ps | grep ruoyi-frontend')
 print(stdout.read().decode().strip())
 
@@ -47,4 +47,4 @@ stdin, stdout, stderr = ssh.exec_command('docker exec ruoyi-frontend date')
 print(f"容器时间: {stdout.read().decode().strip()}")
 
 ssh.close()
-print("\n✅ 完成！")
+print("\n�?完成�?)

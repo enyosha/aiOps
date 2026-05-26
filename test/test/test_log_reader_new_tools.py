@@ -11,25 +11,25 @@ from dotenv import load_dotenv
 load_dotenv()
 
 async def test_new_tools():
-    """测试新增的工具"""
+    """测试新增的工�?""
     print("\n" + "="*80)
     print("测试Log-Reader MCP新增工具")
     print("="*80)
     
-    from Routing.tool_cache import tool_cache
+    from utils.tool_cache import tool_cache
     
-    # 清除缓存，重新加载
+    # 清除缓存，重新加�?
     tool_cache._cache.clear()
     
     tools = await tool_cache.get_tools("log-reader")
     
-    print(f"\n✅ 成功加载 {len(tools)} 个工具:")
+    print(f"\n�?成功加载 {len(tools)} 个工�?")
     for t in tools:
         print(f"  - {t.name}")
     
     # 1. 测试check_memory_usage
     print("\n" + "-"*80)
-    print("【测试1】check_memory_usage")
+    print("【测�?】check_memory_usage")
     print("-"*80)
     mem_tool = next((t for t in tools if t.name == "check_memory_usage"), None)
     if mem_tool:
@@ -49,11 +49,11 @@ async def test_new_tools():
         if mem_data.get('status') == 'success':
             print(mem_data.get('memory_info', 'N/A'))
         else:
-            print(f"❌ 错误: {mem_data.get('message')}")
+            print(f"�?错误: {mem_data.get('message')}")
     
     # 2. 测试check_cpu_usage
     print("\n" + "-"*80)
-    print("【测试2】check_cpu_usage")
+    print("【测�?】check_cpu_usage")
     print("-"*80)
     cpu_tool = next((t for t in tools if t.name == "check_cpu_usage"), None)
     if cpu_tool:
@@ -74,11 +74,11 @@ async def test_new_tools():
             print(f"Uptime: {cpu_data.get('uptime', 'N/A')}")
             print(f"CPU Info: {cpu_data.get('cpu_info', 'N/A')}")
         else:
-            print(f"❌ 错误: {cpu_data.get('message')}")
+            print(f"�?错误: {cpu_data.get('message')}")
     
     # 3. 测试get_system_info
     print("\n" + "-"*80)
-    print("【测试3】get_system_info")
+    print("【测�?】get_system_info")
     print("-"*80)
     sys_tool = next((t for t in tools if t.name == "get_system_info"), None)
     if sys_tool:
@@ -100,16 +100,16 @@ async def test_new_tools():
             for key, value in info.items():
                 print(f"{key}: {value}")
         else:
-            print(f"❌ 错误: {sys_data.get('message')}")
+            print(f"�?错误: {sys_data.get('message')}")
     
     print("\n" + "="*80)
-    print("✅ 所有工具测试完成！")
+    print("�?所有工具测试完成！")
     print("="*80)
 
 if __name__ == "__main__":
     try:
         asyncio.run(test_new_tools())
     except Exception as e:
-        print(f"\n❌ 错误: {str(e)}")
+        print(f"\n�?错误: {str(e)}")
         import traceback
         traceback.print_exc()

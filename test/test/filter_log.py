@@ -12,13 +12,13 @@ def filter_log(input_path: str, output_path: str):
     info_pattern = re.compile(r'^INFO:\s+\d+\.\d+\.\d+\.\d+:\d+\s+-\s+"GET /api/diagnose/')
     
     for line in lines:
-        # 检测横幅边界（包含边框的行）
+        # 检测横幅边界（包含边框的行�?
         if '+-----------------------------------------------------------------------------+' in line:
-            # 切换横幅状态
+            # 切换横幅状�?
             in_banner = not in_banner
             continue
         
-        # 如果在横幅中，跳过
+        # 如果在横幅中，跳�?
         if in_banner:
             continue
         
@@ -26,7 +26,7 @@ def filter_log(input_path: str, output_path: str):
         if info_pattern.match(line):
             continue
         
-        # 保留其他行
+        # 保留其他�?
         filtered_lines.append(line)
     
     # 写入过滤后的内容
@@ -34,7 +34,7 @@ def filter_log(input_path: str, output_path: str):
         f.writelines(filtered_lines)
     
     print(f"原始行数: {len(lines)}")
-    print(f"过滤后行数: {len(filtered_lines)}")
+    print(f"过滤后行�? {len(filtered_lines)}")
     print(f"移除行数: {len(lines) - len(filtered_lines)}")
     print(f"输出文件: {output_path}")
 

@@ -47,7 +47,7 @@ class BaseAgent(ABC):
             return
         
         # 导入全局工具缓存
-        from Routing.tool_cache import tool_cache
+        from utils.tool_cache import tool_cache
         
         # 获取服务器名称
         server_name = self._get_server_name()
@@ -143,7 +143,7 @@ class BaseAgent(ABC):
         print(f"[{self.name}] 执行 {len(tool_calls)} 个工具调用")
         
         # 获取缓存的工具列表
-        from .tool_cache import tool_cache
+        from utils.tool_cache import tool_cache
         server_name = self._get_server_name()
         cached_tools = await tool_cache.get_tools(server_name)
         

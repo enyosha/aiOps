@@ -3,7 +3,7 @@ import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 import asyncio
-from Routing.tool_cache import tool_cache
+from utils.tool_cache import tool_cache
 
 async def test():
     tools = await tool_cache.get_tools('ops-diagnosis')

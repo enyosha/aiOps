@@ -1,5 +1,5 @@
 """
-查看容器重启前的日志，找出问题原因
+查看容器重启前的日志，找出问题原�?
 """
 import asyncio
 import sys
@@ -11,23 +11,23 @@ from dotenv import load_dotenv
 load_dotenv()
 
 async def check_restart_reason():
-    """检查容器重启原因"""
+    """检查容器重启原�?""
     print("\n" + "="*80)
-    print("检查容器重启原因")
+    print("检查容器重启原�?)
     print("="*80)
     
-    from Routing.tool_cache import tool_cache
+    from utils.tool_cache import tool_cache
     
     tools = await tool_cache.get_tools("log-reader")
     read_tool = next((t for t in tools if t.name == "read_docker_logs"), None)
     
     if read_tool:
-        # 读取最近2小时的日志，不过滤，看完整情况
+        # 读取最�?小时的日志，不过滤，看完整情�?
         result = await read_tool.ainvoke({
             "container_name": "ruoyi-app",
             "since_time": "2h",  # 过去2小时
             "lines": 200,  # 增加行数
-            "log_level": None  # 不过滤
+            "log_level": None  # 不过�?
         })
         
         # 解析MCP返回格式
@@ -45,9 +45,9 @@ async def check_restart_reason():
             logs = log_data.get('logs', '')
             lines = logs.splitlines()
             
-            print(f"\n总行数: {len(lines)}")
+            print(f"\n总行�? {len(lines)}")
             
-            # 查找所有包含重启、错误、异常的关键词
+            # 查找所有包含重启、错误、异常的关键�?
             keywords = ['restart', 'exit', 'killed', 'OOM', 'OutOfMemory', 'Exception', 'Error', 'FATAL', 'crash']
             important_lines = []
             
@@ -55,27 +55,27 @@ async def check_restart_reason():
                 if any(keyword.lower() in line.lower() for keyword in keywords):
                     important_lines.append((i+1, line))
             
-            print(f"\n找到 {len(important_lines)} 行重要日志:")
+            print(f"\n找到 {len(important_lines)} 行重要日�?")
             print("-"*80)
             for line_num, line in important_lines:
                 print(f"{line_num:4d}. {line}")
             print("-"*80)
             
-            # 显示最后50行（可能包含重启信息）
-            print(f"\n最后50行日志:")
+            # 显示最�?0行（可能包含重启信息�?
+            print(f"\n最�?0行日�?")
             print("-"*80)
             for i, line in enumerate(lines[-50:], len(lines)-49):
                 print(f"{i:4d}. {line}")
             print("-"*80)
             
-            # 同时检查系统资源
+            # 同时检查系统资�?
             print("\n" + "="*80)
-            print("检查系统资源使用情况")
+            print("检查系统资源使用情�?)
             print("="*80)
             
             ops_tools = await tool_cache.get_tools("ops-diagnosis")
             
-            # 检查内存
+            # 检查内�?
             mem_tool = next((t for t in ops_tools if t.name == "check_memory_usage"), None)
             if mem_tool:
                 mem_result = await mem_tool.ainvoke({})
@@ -111,6 +111,6 @@ if __name__ == "__main__":
     try:
         asyncio.run(check_restart_reason())
     except Exception as e:
-        print(f"\n❌ 错误: {str(e)}")
+        print(f"\n�?错误: {str(e)}")
         import traceback
         traceback.print_exc()

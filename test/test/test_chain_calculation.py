@@ -1,5 +1,5 @@
 """
-测试计算器Agent的链式计算功能
+测试计算器Agent的链式计算功�?
 """
 import asyncio
 import sys
@@ -16,21 +16,21 @@ async def test_chain_calculation():
     from Routing.base_agent import CalculatorAgent
     
     print("=" * 70)
-    print("测试计算器Agent的链式计算功能")
+    print("测试计算器Agent的链式计算功�?)
     print("=" * 70)
     
     # 创建并初始化Agent
     agent = CalculatorAgent()
     await agent.initialize()
     
-    # 测试用例1: 简单计算
-    print("\n【测试1】简单计算: 12 + 6")
+    # 测试用例1: 简单计�?
+    print("\n【测�?】简单计�? 12 + 6")
     result = await agent.ainvoke("12 + 6")
     print(f"结果: {result['response']['content']}")
     print(f"工具调用次数: {len(result.get('tool_calls', []))}")
     
     # 测试用例2: 链式计算
-    print("\n【测试2】链式计算: 12 + 6 - 95")
+    print("\n【测�?】链式计�? 12 + 6 - 95")
     result = await agent.ainvoke("12 + 6 - 95")
     print(f"结果: {result['response']['content']}")
     print(f"工具调用次数: {len(result.get('tool_calls', []))}")
@@ -39,7 +39,7 @@ async def test_chain_calculation():
             print(f"  步骤{i+1}: {tr['tool_name']} -> {tr.get('result', {})}")
     
     # 测试用例3: 更复杂的链式
-    print("\n【测试3】复杂链式: 5 * 3 + 10 - 2")
+    print("\n【测�?】复杂链�? 5 * 3 + 10 - 2")
     result = await agent.ainvoke("5 * 3 + 10 - 2")
     print(f"结果: {result['response']['content']}")
     print(f"工具调用次数: {len(result.get('tool_calls', []))}")
@@ -47,8 +47,8 @@ async def test_chain_calculation():
         for i, tr in enumerate(result['tool_results']):
             print(f"  步骤{i+1}: {tr['tool_name']} -> {tr.get('result', {})}")
     
-    # 测试用例4: 运算优先级（先乘除后加减）
-    print("\n【测试4】运算优先级: 59 + 8 - 8 - 9 / 7")
+    # 测试用例4: 运算优先级（先乘除后加减�?
+    print("\n【测�?】运算优先级: 59 + 8 - 8 - 9 / 7")
     result = await agent.ainvoke("59 + 8 - 8 - 9 / 7")
     print(f"结果: {result['response']['content']}")
     print(f"工具调用次数: {len(result.get('tool_calls', []))}")

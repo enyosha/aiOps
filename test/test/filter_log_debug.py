@@ -1,7 +1,7 @@
 import re
 
 def filter_log_debug(input_path: str, output_path: str):
-    """过滤日志文件中的FastMCP横幅和Uvicorn INFO信息（调试版）"""
+    """过滤日志文件中的FastMCP横幅和Uvicorn INFO信息（调试版�?""
     
     with open(input_path, 'r', encoding='utf-8-sig', errors='ignore') as f:
         lines = f.readlines()
@@ -12,18 +12,18 @@ def filter_log_debug(input_path: str, output_path: str):
     skipped_count = 0
     
     for i, line in enumerate(lines, 1):
-        # 检测横幅开始（包含边框的行）
+        # 检测横幅开始（包含边框的行�?
         if '+-----------------------------------------------------------------------------+' in line:
             in_banner = True
-            print(f"行 {i}: 检测到横幅开始")
+            print(f"�?{i}: 检测到横幅开�?)
             continue
         
-        # 如果在横幅中，跳过直到横幅结束
+        # 如果在横幅中，跳过直到横幅结�?
         if in_banner:
-            # 检测横幅结束
+            # 检测横幅结�?
             if '+-----------------------------------------------------------------------------+' in line:
                 in_banner = False
-                print(f"行 {i}: 检测到横幅结束")
+                print(f"�?{i}: 检测到横幅结束")
             else:
                 skipped_count += 1
             continue
@@ -33,7 +33,7 @@ def filter_log_debug(input_path: str, output_path: str):
             skipped_count += 1
             continue
         
-        # 保留其他行
+        # 保留其他�?
         filtered_lines.append(line)
     
     # 写入过滤后的内容
@@ -42,7 +42,7 @@ def filter_log_debug(input_path: str, output_path: str):
     
     print(f"\n统计信息:")
     print(f"原始行数: {len(lines)}")
-    print(f"过滤后行数: {len(filtered_lines)}")
+    print(f"过滤后行�? {len(filtered_lines)}")
     print(f"移除行数: {len(lines) - len(filtered_lines)}")
     print(f"输出文件: {output_path}")
 

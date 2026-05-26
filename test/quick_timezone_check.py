@@ -1,13 +1,13 @@
 """
-快速时区检查脚本
-快速诊断前端日志时间显示问题
+快速时区检查脚�?
+快速诊断前端日志时间显示问�?
 """
 import sys
 import os
 from datetime import datetime, timezone
 
 print("="*80)
-print("快速时区检查")
+print("快速时区检�?)
 print("="*80)
 
 # 获取时间信息
@@ -25,13 +25,13 @@ if tz_offset:
     print(f"时区偏移:   UTC{hours:+.1f}")
     
     if abs(hours - 8) < 0.1:
-        print("\n✅ 时区设置正确 (UTC+8)")
-        print("如果前端仍显示UTC时间，请检查:")
-        print("  1. 服务器/容器时区设置")
+        print("\n�?时区设置正确 (UTC+8)")
+        print("如果前端仍显示UTC时间，请检�?")
+        print("  1. 服务�?容器时区设置")
         print("  2. 应用代码中的时间处理逻辑")
         print("  3. Nginx日志格式配置")
     else:
-        print(f"\n❌ 时区设置不正确，期望UTC+8，实际为UTC{hours:+.1f}")
+        print(f"\n�?时区设置不正确，期望UTC+8，实际为UTC{hours:+.1f}")
         print("建议执行: python test/check_timezone.py 获取详细信息")
 else:
     print("\n⚠️ 无法确定时区偏移")

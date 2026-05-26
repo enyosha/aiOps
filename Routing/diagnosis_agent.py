@@ -72,9 +72,6 @@ class DiagnosisState(TypedDict):
     port_check_results: Optional[dict]    # 端口检查结果 {service_name: {port, reachable}}
     performance_metrics: Optional[dict]   # 性能指标 {service_name: {cpu, memory, response_time}}
     health_check_summary: Optional[str]   # 健康检查摘要文本
-    
-    # === 内部调试字段（不用于诊断逻辑）===
-    _health_check_execution_count: int    # 健康检查执行次数计数器
 
 # ===== LLM 初始化 =====
 
@@ -348,7 +345,6 @@ async def perform_health_checks(state: DiagnosisState) -> dict:
     Returns:
         {
             'health_check_results': {...},
-            'port_check_results': {...},
             'performance_metrics': {...},
             'summary': str
         }
@@ -357,7 +353,6 @@ async def perform_health_checks(state: DiagnosisState) -> dict:
     servers_config = state.get('servers_config', {})
     
     health_results = {}
-    port_results = {}
     perf_metrics = {}
     
     for container in discovered:
@@ -440,7 +435,6 @@ async def perform_health_checks(state: DiagnosisState) -> dict:
     
     return {
         'health_check_results': health_results,
-        'port_check_results': port_results,
         'performance_metrics': perf_metrics,
         'summary': summary
     }
@@ -858,134 +852,6 @@ async def analyze_node(state: DiagnosisState) -> DiagnosisState:
             "actions_taken": state.get('actions_taken', []) + ["force_stop_by_max_iterations"]
         }
     
-    # === 新增：检测异常的资源使用情况（高CPU、高内存）===
-    docker_stats_info = state.get('docker_stats_info', '')
-    resource_anomaly_checked = state.get('resource_anomaly_checked', False)
-    print(f"[Analyze] [DEBUG] docker_stats_info 长度: {len(docker_stats_info)}, resource_anomaly_checked: {resource_anomaly_checked}")
-    if docker_stats_info and not resource_anomaly_checked:
-        # 解析 docker stats 数据，检测异常
-        high_cpu_containers = []
-        high_memory_containers = []
-        
-        # 简单的关键词检测（实际应该解析表格数据）
-        lines = docker_stats_info.split('\n')
-        for line in lines:
-            # 检测高 CPU（>100%）
-            if '%' in line:
-                try:
-                    parts = line.split()
-                    for i, part in enumerate(parts):
-                        if '%' in part:
-                            cpu_value = float(part.replace('%', '').strip())
-                            if cpu_value > 100:
-                                container_name = parts[i-1] if i > 0 else 'unknown'
-                                high_cpu_containers.append((container_name, cpu_value))
-                            break
-                except:
-                    pass
-        
-        if high_cpu_containers:
-            print(f"[Analyze] [ALERT] 检测到 {len(high_cpu_containers)} 个容器 CPU 使用率异常高:")
-            for name, cpu in high_cpu_containers:
-                print(f"  - {name}: {cpu}%")
-            
-            # 【重要】高CPU是紧急问题，需要深入诊断
-            # 即使有其他问题（如服务缺失），也要先处理高CPU问题
-            print("[Analyze] [CRITICAL] 高CPU使用率属于紧急问题，需要深入诊断根因")
-            
-            # 如果还没有读取日志，触发读取
-            if not state.get('logs_data'):
-                print("[Analyze] 决定读取高CPU容器的详细日志、线程信息和资源使用情况")
-                return {
-                    **state,
-                    "current_step": "collect_data",
-                    "next_action": "read_logs",
-                    "resource_anomaly_checked": True,
-                    "actions_taken": state.get('actions_taken', []) + ["detect_high_cpu_critical"]
-                }
-            else:
-                # 日志已读取，继续其他诊断步骤
-                print("[Analyze] 日志已读取，继续其他诊断步骤")
-                # 清除 next_action，避免循环
-                state = {**state, "next_action": None}
-    
-    # === 新增:服务未启动的快速判断 ===
-    if state.get('config_status') == 'complete' and has_stopped_services(state):
-        stopped_services = get_stopped_services(state)
-        logs_data = state.get('logs_data', '')
-        discovered = state.get('discovered_containers') or []
-        
-        # 检查是否有服务完全缺失（容器不存在）
-        missing_containers = [c for c in discovered if c.get('issue') in ['no_containers', 'service_not_found', 'compose_services_not_started']]
-        
-        if missing_containers:
-            # 【重要优化】服务完全缺失时，不要立即生成报告
-            # 应该先收集其他正常服务的日志和状态，以便全面诊断
-            print(f"[Analyze] 检测到 {len(missing_containers)} 个服务完全缺失")
-            for mc in missing_containers:
-                print(f"  - {mc['name']} ({mc['type']}): {mc.get('diagnosis_details', '')}")
-            
-            # 如果还没有读取日志，先读取所有可用服务的日志
-            if not state.get('logs_data'):
-                print("[Analyze] 决定先读取其他服务的日志以进行全面诊断")
-                return {
-                    **state,
-                    "current_step": "collect_data",
-                    "next_action": "read_logs",
-                    "actions_taken": state.get('actions_taken', []) + ["detect_missing_services"]
-                }
-            
-            # 如果已有日志数据，再生成报告
-            print(f"[Analyze] 已有日志数据，生成包含缺失服务的完整报告")
-            missing_summary = format_stopped_services(stopped_services, '', discovered)
-            return {
-                **state,
-                "current_step": "generate_report",
-                "service_status_summary": missing_summary,
-                "actions_taken": state.get('actions_taken', []) + ["detect_missing_services"]
-            }
-        
-        # 如果已有日志数据,检查是否有服务停止的证据
-        if logs_data:
-            logs_evidence = check_logs_for_service_stop(state, stopped_services)
-            
-            if logs_evidence:  # 日志中有相关证据
-                print(f"[Analyze] 检测到 {len(stopped_services)} 个服务未启动,直接生成报告")
-                return {
-                    **state,
-                    "current_step": "generate_report",
-                    "service_status_summary": format_stopped_services(stopped_services, logs_evidence, discovered),
-                    "actions_taken": state.get('actions_taken', []) + ["detect_stopped_services"]
-                }
-    
-    # === 新增：可疑容器检查（端口为空或状态异常）===
-    discovered = state.get('discovered_containers') or []  # 防止 None 值
-    suspicious_containers = [c for c in discovered if c.get('issue') == 'suspicious_container']
-    
-    if suspicious_containers:
-        print(f"[Analyze] [WARN] 发现 {len(suspicious_containers)} 个可疑容器，需要进一步诊断")
-        for c in suspicious_containers:
-            print(f"  - {c['name']}: {c.get('diagnosis_details', '')}")
-        
-        # 如果有可疑容器但还没有读取日志，先读取日志
-        if not state.get('logs_data'):
-            print("[Analyze] 决定先读取日志以确认容器状态")
-            return {
-                **state,
-                "current_step": "collect_data",
-                "next_action": "read_logs",
-                "actions_taken": state.get('actions_taken', []) + ["detect_suspicious_containers"]
-            }
-    
-    # === 新增:配置不足的快速判断 ===
-    if state.get('config_status') == 'none':
-        print("[Analyze] 配置信息不足,返回错误")
-        return {
-            **state,
-            "current_step": "error_no_config",
-            "actions_taken": state.get('actions_taken', []) + ["check_config"]
-        }
-    
     # === 新增:部分配置时触发 Docker 发现 ===
     if state.get('config_status') == 'partial' and not state.get('discovered_containers'):
         print("[Analyze] 配置不完整,触发 Docker 容器发现")
@@ -1004,48 +870,48 @@ async def analyze_node(state: DiagnosisState) -> DiagnosisState:
     
     prompt = f"""你是运维诊断专家。请基于当前已收集的数据决定下一步行动。
 
-【已执行的行动】: {actions_taken_str}
-【当前数据状态】:
-- 内存信息: {'已收集' if state.get('memory_info') else '未收集'}
-- CPU信息: {'已收集' if state.get('cpu_info') else '未收集'}
-- 服务状态: {'已收集' if state.get('service_status') else '未收集'}
-- MySQL状态: {'已收集' if state.get('mysql_status') else '未收集'}
-- 日志数据: {'已收集' if state.get('logs_data') else '未收集'}
-- 健康检查: {'已执行' if state.get('health_check_results') else '未执行'}
-- 当前日志追溯范围: {state.get('log_search_range_minutes', 0)}分钟
-- 已收集的日志范围: {len(state.get('logs_collected_ranges', []))}个
-- Docker Stats: {'已收集（见下方容器资源使用情况）' if state.get('docker_stats_info') else '未收集'}
+    【已执行的行动】: {actions_taken_str}
+    【当前数据状态】:
+    - 内存信息: {'已收集' if state.get('memory_info') else '未收集'}
+    - CPU信息: {'已收集' if state.get('cpu_info') else '未收集'}
+    - 服务状态: {'已收集' if state.get('service_status') else '未收集'}
+    - MySQL状态: {'已收集' if state.get('mysql_status') else '未收集'}
+    - 日志数据: {'已收集' if state.get('logs_data') else '未收集'}
+    - 健康检查: {'已执行' if state.get('health_check_results') else '未执行'}
+    - 当前日志追溯范围: {state.get('log_search_range_minutes', 0)}分钟
+    - 已收集的日志范围: {len(state.get('logs_collected_ranges', []))}个
+    - Docker Stats: {'已收集（见下方容器资源使用情况）' if state.get('docker_stats_info') else '未收集'}
 
-{state.get('docker_stats_info', '')}
+    {state.get('docker_stats_info', '')}
 
-请决定下一步行动（只返回一个行动名称，不要其他内容）：
-1. check_memory - 检查内存使用情况
-2. check_cpu - 检查CPU使用情况
-3. check_service - 检查服务运行状态
-4. check_mysql - 检查MySQL数据库状态
-5. read_logs - 读取或扩大日志追溯范围
-6. read_logs_recent - 读取相关服务的最近10分钟日志
-7. perform_health_check - 执行服务健康检查（HTTP+端口+性能）
-8. generate_report - 生成诊断报告
+    请决定下一步行动（只返回一个行动名称，不要其他内容）：
+    1. check_memory - 检查内存使用情况
+    2. check_cpu - 检查CPU使用情况
+    3. check_service - 检查服务运行状态
+    4. check_mysql - 检查MySQL数据库状态
+    5. read_logs - 读取或扩大日志追溯范围
+    6. read_logs_recent - 读取相关服务的最近10分钟日志
+    7. perform_health_check - 执行服务健康检查（HTTP+端口+性能）
+    8. generate_report - 生成诊断报告
 
-决策规则（按优先级判断）：
-1. **如果检测到服务完全缺失** → 直接 generate_report
-2. 如果check_memory未执行 → check_memory
-3. 如果check_memory已执行但check_cpu未执行 → check_cpu
-4. 如果核心资源指标已检查但未执行健康检查 → perform_health_check
-5. 如果还未读取任何日志 → read_logs
-6. 如果已读取后端日志但未读取相关服务日志 → read_logs_recent
-7. 如果已有足够信息 → generate_report
+    决策规则（按优先级判断）：
+    1. **如果检测到服务完全缺失** → 直接 generate_report
+    2. 如果check_memory未执行 → check_memory
+    3. 如果check_memory已执行但check_cpu未执行 → check_cpu
+    4. 如果核心资源指标已检查但未执行健康检查 → perform_health_check
+    5. 如果还未读取任何日志 → read_logs
+    6. 如果已读取后端日志但未读取相关服务日志 → read_logs_recent
+    7. 如果已有足够信息 → generate_report
 
-重要：
-- **健康检查应该在资源检查之后、日志分析之前执行**
-- 健康检查可以帮助确认服务当前是否真正可用
-- 如果健康检查发现服务不可用，需要在报告中明确指出
-- **⚠️ 重要约束：perform_health_check 只能执行一次！**
-  - 如果已经执行过健康检查（actions_taken 中包含 perform_health_check），不要再选择它
-  - 健康检查只需要执行一次就能获取所有服务的状态
-  - 重复执行健康检查是浪费资源，应该直接进行日志分析或生成报告
-"""
+    重要：
+    - **健康检查应该在资源检查之后、日志分析之前执行**
+    - 健康检查可以帮助确认服务当前是否真正可用
+    - 如果健康检查发现服务不可用，需要在报告中明确指出
+    - **⚠️ 重要约束：perform_health_check 只能执行一次！**
+    - 如果已经执行过健康检查（actions_taken 中包含 perform_health_check），不要再选择它
+    - 健康检查只需要执行一次就能获取所有服务的状态
+    - 重复执行健康检查是浪费资源，应该直接进行日志分析或生成报告
+    """
     
     response = await llm.ainvoke(prompt)
     next_action = response.content.strip()
@@ -1078,71 +944,6 @@ async def analyze_node(state: DiagnosisState) -> DiagnosisState:
         "next_action": next_action,  # 同时更新next_action供collect_data_node使用
         "actions_taken": state.get('actions_taken', []) + [next_action]
     }
-
-
-# async def scan_anomalies_node(state: DiagnosisState) -> DiagnosisState:
-#     """
-#     节点2：快速扫描日志，识别异常时间点
-#     """
-#     print(f"\n{'='*70}")
-#     print(f"[Scan Anomalies] 快速扫描异常时间点")
-#     print(f"{'='*70}")
-#
-#     from Routing.tool_cache import tool_cache
-#     tools = await tool_cache.get_tools("log-reader")
-#     scan_tool = next((t for t in tools if t.name == "scan_logs_for_anomalies"), None)
-#     
-#     if not scan_tool:
-#         print("[Scan Anomalies] 未找到scan_logs_for_anomalies工具")
-#         return {
-#             **state,
-#             "anomaly_timestamps": [],
-#             "iteration_count": state['iteration_count'] + 1
-#         }
-#     
-#     try:
-#         result = await scan_tool.ainvoke({
-#             "container_name": state['container_name'],
-#             "time_range_hours": 2  # 扫描过去2小时
-#         })
-#         
-#         # 解析MCP返回格式
-#         if isinstance(result, list) and len(result) > 0:
-#             first_item = result[0]
-#             if isinstance(first_item, dict) and 'text' in first_item:
-#                 scan_data = json.loads(first_item['text'])
-#             else:
-#                 scan_data = first_item
-#         else:
-#             scan_data = result
-#         
-#         if scan_data.get('status') == 'success':
-#             timestamps = scan_data.get('anomaly_timestamps', [])
-#             print(f"[Scan Anomalies] 找到 {len(timestamps)} 个异常时间点")
-#             for ts in timestamps[:5]:
-#                 print(f"  - {ts}")
-#             
-#             return {
-#                 **state,
-#                 "anomaly_timestamps": timestamps,
-#                 "iteration_count": state['iteration_count'] + 1
-#             }
-#         else:
-#             print(f"[Scan Anomalies] 扫描失败: {scan_data.get('message')}")
-#             return {
-#                 **state,
-#                 "anomaly_timestamps": [],
-#                 "iteration_count": state['iteration_count'] + 1
-#             }
-#     
-#     except Exception as e:
-#         print(f"[Scan Anomalies] 错误: {str(e)}")
-#         return {
-#             **state,
-#             "anomaly_timestamps": [],
-#             "iteration_count": state['iteration_count'] + 1
-#         }
-
 
 async def discover_containers_node(state: DiagnosisState) -> DiagnosisState:
     """
@@ -1449,62 +1250,6 @@ async def discover_containers_node(state: DiagnosisState) -> DiagnosisState:
         "docker_stats_info": docker_stats_info,  # 新增：保存 docker stats
         "iteration_count": state['iteration_count'] + 1
     }
-#     
-#     from Routing.tool_cache import tool_cache
-#     tools = await tool_cache.get_tools("log-reader")
-#     scan_tool = next((t for t in tools if t.name == "scan_logs_for_anomalies"), None)
-#     
-#     if not scan_tool:
-#         print("[Scan Anomalies] 未找到scan_logs_for_anomalies工具")
-#         return {
-#             **state,
-#             "anomaly_timestamps": [],
-#             "iteration_count": state['iteration_count'] + 1
-#         }
-#     
-#     try:
-#         result = await scan_tool.ainvoke({
-#             "container_name": state['container_name'],
-#             "time_range_hours": 2  # 扫描过去2小时
-#         })
-#         
-#         # 解析MCP返回格式
-#         if isinstance(result, list) and len(result) > 0:
-#             first_item = result[0]
-#             if isinstance(first_item, dict) and 'text' in first_item:
-#                 scan_data = json.loads(first_item['text'])
-#             else:
-#                 scan_data = first_item
-#         else:
-#             scan_data = result
-#         
-#         if scan_data.get('status') == 'success':
-#             timestamps = scan_data.get('anomaly_timestamps', [])
-#             print(f"[Scan Anomalies] 找到 {len(timestamps)} 个异常时间点")
-#             for ts in timestamps[:5]:
-#                 print(f"  - {ts}")
-#             
-#             return {
-#                 **state,
-#                 "anomaly_timestamps": timestamps,
-#                 "iteration_count": state['iteration_count'] + 1
-#             }
-#         else:
-#             print(f"[Scan Anomalies] 扫描失败: {scan_data.get('message')}")
-#             return {
-#                 **state,
-#                 "anomaly_timestamps": [],
-#                 "iteration_count": state['iteration_count'] + 1
-#             }
-#     
-#     except Exception as e:
-#         print(f"[Scan Anomalies] 错误: {str(e)}")
-#         return {
-#             **state,
-#             "anomaly_timestamps": [],
-#             "iteration_count": state['iteration_count'] + 1
-#         }
-
 
 async def collect_data_node(state: DiagnosisState) -> DiagnosisState:
     """
@@ -1512,19 +1257,12 @@ async def collect_data_node(state: DiagnosisState) -> DiagnosisState:
     """
     # === 修复：使用 next_action 而不是 current_step ===
     action = state.get('next_action', state['current_step'])
+
+    print(f"\n{'='*70}")
+    print(f"[Collect Data] 执行行动: {action}")
+    print(f"{'='*70}")
     
-    # 追踪 perform_health_check 执行次数
-    if action == "perform_health_check":
-        health_check_count = state.get('_health_check_execution_count', 0) + 1
-        print(f"\n{'='*70}")
-        print(f"[Collect Data] ⚠️  WARNING: perform_health_check 第 {health_check_count} 次执行")
-        print(f"{'='*70}")
-    else:
-        print(f"\n{'='*70}")
-        print(f"[Collect Data] 执行行动: {action}")
-        print(f"{'='*70}")
-    
-    from Routing.tool_cache import tool_cache
+    from utils.tool_cache import tool_cache
     
     if action == "read_logs":
         # 读取或扩大日志追溯范围
@@ -1865,8 +1603,8 @@ async def collect_data_node(state: DiagnosisState) -> DiagnosisState:
     
     elif action == "check_memory":
         # 检查内存使用情况
-        log_tools = await tool_cache.get_tools("log-reader")
-        mem_tool = next((t for t in log_tools if t.name == "check_memory_usage"), None)
+        ops_tools = await tool_cache.get_tools("ops-diagnosis")
+        mem_tool = next((t for t in ops_tools if t.name == "check_memory_usage"), None)
         
         if mem_tool:
             print(f"[Collect Data] 检查内存使用情况")
@@ -1895,8 +1633,8 @@ async def collect_data_node(state: DiagnosisState) -> DiagnosisState:
     
     elif action == "check_cpu":
         # 检查CPU使用情况
-        log_tools = await tool_cache.get_tools("log-reader")
-        cpu_tool = next((t for t in log_tools if t.name == "check_cpu_usage"), None)
+        ops_tools = await tool_cache.get_tools("ops-diagnosis")
+        cpu_tool = next((t for t in ops_tools if t.name == "check_cpu_usage"), None)
         
         if cpu_tool:
             print(f"[Collect Data] 检查CPU使用情况")
@@ -1926,8 +1664,8 @@ async def collect_data_node(state: DiagnosisState) -> DiagnosisState:
     
     elif action == "check_service":
         # 检查服务状态
-        log_tools = await tool_cache.get_tools("log-reader")
-        status_tool = next((t for t in log_tools if t.name == "get_container_status"), None)
+        ops_tools = await tool_cache.get_tools("ops-diagnosis")
+        status_tool = next((t for t in ops_tools if t.name == "get_container_status"), None)
         
         if status_tool:
             print(f"[Collect Data] 检查服务状态")
@@ -1967,8 +1705,8 @@ async def collect_data_node(state: DiagnosisState) -> DiagnosisState:
     
     elif action == "check_mysql":
         # 检查MySQL状态
-        log_tools = await tool_cache.get_tools("log-reader")
-        mysql_tool = next((t for t in log_tools if t.name == "check_mysql_status"), None)
+        ops_tools = await tool_cache.get_tools("ops-diagnosis")
+        mysql_tool = next((t for t in ops_tools if t.name == "check_mysql_status"), None)
         
         if mysql_tool:
             print(f"[Collect Data] 检查MySQL数据库状态")
@@ -2033,10 +1771,9 @@ async def collect_data_node(state: DiagnosisState) -> DiagnosisState:
             
             return {
                 **state,
-                "health_check_results": check_results['health_check_results'],
-                "port_check_results": check_results['port_check_results'],
-                "performance_metrics": check_results['performance_metrics'],
-                "health_check_summary": check_results['summary'],
+                "health_check_results": check_results.get('health_check_results', {}),
+                "performance_metrics": check_results.get('performance_metrics', {}),
+                "health_check_summary": check_results.get('summary', ''),
                 "_health_check_execution_count": health_check_count,  # 记录执行次数
                 "iteration_count": state['iteration_count'] + 1
             }
@@ -2395,7 +2132,6 @@ async def generate_report_node(state: DiagnosisState) -> DiagnosisState:
     # === 新增：整合健康检查结果到当前状态验证 ===
     health_summary = state.get('health_check_summary', '')
     health_results = state.get('health_check_results', {})
-    port_results = state.get('port_check_results', {})
     perf_metrics = state.get('performance_metrics', {})
     
     if health_summary:
@@ -2939,10 +2675,6 @@ def route_after_analyze(state: DiagnosisState) -> str:
     # current_step 实际上是 analyze_node 决定的"下一步行动"
     print(f"[Route] [DEBUG] next_action: {next_action}")
     
-    # === 新增:配置错误和服务未启动的快速路由 ===
-    if action == "error_no_config":
-        return "generate_error_report"
-    
     if action == "discover_containers":
         return "discover_containers"
     
@@ -3054,13 +2786,10 @@ async def run_diagnosis(
         "log_search_range_minutes": 0,  # 初始为0,首次读取时设为30
         "logs_collected_ranges": [],  # 已收集的日志范围列表
         "diagnosis_result": None,
-        # 新增字段
         "config_status": config_status,
         "servers_config": servers_config,
         "discovered_containers": [],
         "service_status_summary": "",
-        # 内部调试字段
-        "_health_check_execution_count": 0  # 健康检查执行次数计数器
     }
     
     try:

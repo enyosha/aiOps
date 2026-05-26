@@ -11,12 +11,12 @@ from dotenv import load_dotenv
 load_dotenv()
 
 async def debug_logs():
-    """查看所有日志，分析时间戳格式"""
+    """查看所有日志，分析时间戳格�?""
     print("\n" + "="*80)
-    print("调试：查看原始日志格式")
+    print("调试：查看原始日志格�?)
     print("="*80)
     
-    from Routing.tool_cache import tool_cache
+    from utils.tool_cache import tool_cache
     
     tools = await tool_cache.get_tools("log-reader")
     read_tool = next((t for t in tools if t.name == "read_docker_logs"), None)
@@ -32,7 +32,7 @@ async def debug_logs():
             "container_name": "ruoyi-app",
             "since_time": since_time,
             "lines": 100,
-            "log_level": None  # 不过滤
+            "log_level": None  # 不过�?
         })
         
         # 解析MCP返回格式
@@ -50,8 +50,8 @@ async def debug_logs():
             logs = log_data.get('logs', '')
             lines = logs.splitlines()
             
-            print(f"\n总行数: {len(lines)}")
-            print(f"\n前20行日志:")
+            print(f"\n总行�? {len(lines)}")
+            print(f"\n�?0行日�?")
             print("-"*80)
             for i, line in enumerate(lines[:20], 1):
                 print(f"{i:3d}. {line}")
@@ -60,7 +60,7 @@ async def debug_logs():
             # 查找包含ERROR或WARN的行
             print(f"\n包含ERROR或WARN的行:")
             error_lines = [line for line in lines if 'ERROR' in line or 'WARN' in line or 'error' in line.lower() or 'warn' in line.lower()]
-            print(f"共找到 {len(error_lines)} 行")
+            print(f"共找�?{len(error_lines)} �?)
             for i, line in enumerate(error_lines, 1):
                 print(f"{i}. {line}")
         else:
@@ -70,6 +70,6 @@ if __name__ == "__main__":
     try:
         asyncio.run(debug_logs())
     except Exception as e:
-        print(f"\n❌ 错误: {str(e)}")
+        print(f"\n�?错误: {str(e)}")
         import traceback
         traceback.print_exc()

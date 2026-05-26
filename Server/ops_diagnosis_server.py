@@ -307,6 +307,152 @@ def load_ops_knowledge_entries() -> dict:
             "message": f"知识条目加载失败: {str(e)}"
         }
 
+
+@mcp.tool()
+def get_container_status(container_name: str) -> dict:
+    """
+    获取Docker容器的运行状态
+    
+    Args:
+        container_name: 容器名称
+    
+    Returns:
+        包含容器状态的字典
+    """
+    logger.info(f"\n[Container Status] Checking: {container_name}")
+    
+    try:
+        # SSH配置
+        ssh_host = os.getenv("SSH_HOST", "8.130.131.36")
+        ssh_port = int(os.getenv("SSH_PORT", "22"))
+        ssh_user = os.getenv("SSH_USER", "root")
+        ssh_key_path = os.getenv("SSH_KEY_PATH", "./aiOps.pem")
+        
+        if not os.path.isabs(ssh_key_path):
+            ssh_key_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), ssh_key_path)
+        
+        private_key = paramiko.RSAKey.from_private_key_file(ssh_key_path)
+        ssh_client = paramiko.SSHClient()
+        ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        ssh_client.connect(hostname=ssh_host, port=ssh_port, username=ssh_user, pkey=private_key)
+        
+        # 检查容器是否运行
+        cmd = f"docker ps --filter name={container_name} --format '{{{{.Names}}}}\t{{{{.Status}}}}'"
+        
+        stdin, stdout, stderr = ssh_client.exec_command(cmd)
+        output = stdout.read().decode('utf-8').strip()
+        
+        if output:
+            parts = output.split('\t')
+            name = parts[0] if len(parts) > 0 else container_name
+            status = parts[1] if len(parts) > 1 else "unknown"
+            
+            logger.info(f"[Container Status] {name}: {status}")
+            ssh_client.close()
+            
+            return {
+                "status": "success",
+                "container": name,
+                "running": True,
+                "status_detail": status
+            }
+        else:
+            # 容器可能已停止，检查是否存在
+            cmd_check = f"docker ps -a --filter name={container_name} --format '{{{{.Names}}}}\t{{{{.Status}}}}'"
+            
+            stdin, stdout, stderr = ssh_client.exec_command(cmd_check)
+            output = stdout.read().decode('utf-8').strip()
+            ssh_client.close()
+            
+            if output:
+                parts = output.split('\t')
+                name = parts[0] if len(parts) > 0 else container_name
+                status = parts[1] if len(parts) > 1 else "unknown"
+                
+                logger.info(f"[Container Status] {name}: {status} (stopped)")
+                
+                return {
+                    "status": "success",
+                    "container": name,
+                    "running": False,
+                    "status_detail": status
+                }
+            else:
+                logger.warning(f"[Container Status] Container not found: {container_name}")
+                ssh_client.close()
+                return {
+                    "status": "error",
+                    "message": f"容器 '{container_name}' 不存在"
+                }
+    
+    except Exception as e:
+        logger.error(f"[Container Status] Error: {str(e)}")
+        return {
+            "status": "error",
+            "message": str(e)
+        }
+
+
+@mcp.tool()
+def check_mysql_status() -> dict:
+    """
+    通过SSH检查MySQL服务状态
+    
+    Returns:
+        包含MySQL服务状态的字典
+    """
+    try:
+        # SSH配置
+        ssh_host = os.getenv("SSH_HOST", "8.130.131.36")
+        ssh_port = int(os.getenv("SSH_PORT", "22"))
+        ssh_user = os.getenv("SSH_USER", "root")
+        ssh_key_path = os.getenv("SSH_KEY_PATH", "./aiOps.pem")
+        
+        if not os.path.isabs(ssh_key_path):
+            ssh_key_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), ssh_key_path)
+        
+        private_key = paramiko.RSAKey.from_private_key_file(ssh_key_path)
+        ssh_client = paramiko.SSHClient()
+        ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        ssh_client.connect(hostname=ssh_host, port=ssh_port, username=ssh_user, pkey=private_key)
+        
+        # 检查MySQL进程
+        cmd1 = "ps aux | grep mysql | grep -v grep"
+        stdin, stdout, stderr = ssh_client.exec_command(cmd1)
+        process_output = stdout.read().decode('utf-8').strip()
+        
+        # 检查MySQL端口
+        cmd2 = "netstat -tlnp | grep :3306 || ss -tlnp | grep :3306"
+        stdin, stdout, stderr = ssh_client.exec_command(cmd2)
+        port_output = stdout.read().decode('utf-8').strip()
+        
+        # 检查Docker中的MySQL容器（如果使用Docker）
+        cmd3 = "docker ps --filter name=mysql --format '{{.Names}}\t{{.Status}}'"
+        stdin, stdout, stderr = ssh_client.exec_command(cmd3)
+        docker_output = stdout.read().decode('utf-8').strip()
+        
+        ssh_client.close()
+        
+        mysql_running = bool(process_output or port_output or docker_output)
+        
+        result = {
+            "status": "success",
+            "mysql_running": mysql_running,
+            "process_info": process_output if process_output else "未找到MySQL进程",
+            "port_info": port_output if port_output else "3306端口未监听",
+            "docker_info": docker_output if docker_output else "未找到MySQL容器"
+        }
+        
+        logger.info(f"[MySQL Check] Running: {mysql_running}")
+        
+        return result
+    except Exception as e:
+        logger.error(f"[MySQL Check] Error: {str(e)}")
+        return {
+            "status": "error",
+            "message": f"检查MySQL状态失败: {str(e)}"
+        }
+
 if __name__ == "__main__":
     logger.info("Ops Diagnosis Server starting...")
     mcp.run(transport="stdio")

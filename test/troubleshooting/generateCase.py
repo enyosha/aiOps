@@ -1,5 +1,5 @@
 """
-统一构建所有故障测试环境
+统一构建所有故障测试环�?
 支持通过命令行参数或交互式选择要构建的case
 """
 import sys
@@ -22,7 +22,7 @@ ssh_config = {
     "key_file": os.getenv("SSH_KEY_PATH", "./aiOps.pem")
 }
 
-# 如果是相对路径,转换为绝对路径
+# 如果是相对路�?转换为绝对路�?
 if not os.path.isabs(ssh_config["key_file"]):
     ssh_config["key_file"] = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), ssh_config["key_file"])
 
@@ -33,7 +33,7 @@ def execute_ssh_command(cmd, timeout=30):
     
     Args:
         cmd: 要执行的命令
-        timeout: 超时时间(秒)
+        timeout: 超时时间(�?
     
     Returns:
         tuple: (stdout输出, stderr输出)
@@ -56,7 +56,7 @@ def execute_ssh_command(cmd, timeout=30):
         
         return output, error
     except Exception as e:
-        print(f"❌ SSH命令执行失败: {str(e)}")
+        print(f"�?SSH命令执行失败: {str(e)}")
         return "", str(e)
     finally:
         ssh.close()
@@ -67,20 +67,20 @@ def generate_case01():
     Case01: Tomcat线程池耗尽导致请求超时
     
     故障原理:
-    - RuoYi使用Spring Boot内置Tomcat作为Web服务器
+    - RuoYi使用Spring Boot内置Tomcat作为Web服务�?
     - 正常配置: server.tomcat.threads.max=800, min-spare=100
     - 将max改为5,高并发时线程池迅速耗尽
-    - 新请求进入等待队列(accept-count=1000),超过后返回504超时
+    - 新请求进入等待队�?accept-count=1000),超过后返�?04超时
     """
     print("\n" + "="*80)
     print("【Case01】构建Tomcat线程池耗尽故障")
     print("="*80)
     
     container_name = "ruoyi-app"
-    host_config_dir = "/opt/services/ruoyi/config"  # 宿主机配置目录
+    host_config_dir = "/opt/services/ruoyi/config"  # 宿主机配置目�?
     
     # 步骤1: 在宿主机创建覆盖配置文件(Spring Boot支持外部配置)
-    print("\n1️⃣  创建Tomcat线程池覆盖配置...")
+    print("\n1️⃣  创建Tomcat线程池覆盖配�?..")
     
     # 创建配置目录
     mkdir_cmd = f"sudo mkdir -p {host_config_dir}"
@@ -102,26 +102,26 @@ EOF'"""
     output, error = execute_ssh_command(write_cmd)
     
     if error:
-        print(f"   ❌ 创建配置文件失败: {error}")
+        print(f"   �?创建配置文件失败: {error}")
         return
     
-    print(f"   ✅ 配置文件已创建: {host_config_dir}/application.yml")
+    print(f"   �?配置文件已创�? {host_config_dir}/application.yml")
     print(f"   📝 内容: server.tomcat.threads.max=5, min-spare=2")
     
     # 步骤2: 停止当前容器
     print("\n2️⃣  停止ruoyi-app容器...")
     stop_cmd = f"docker stop {container_name}"
     execute_ssh_command(stop_cmd)
-    print("   ✅ 容器已停止")
+    print("   �?容器已停�?)
     
-    # 步骤3: 重新启动容器并挂载配置文件
-    print("\n3️⃣  重新启动容器并挂载外部配置...")
+    # 步骤3: 重新启动容器并挂载配置文�?
+    print("\n3️⃣  重新启动容器并挂载外部配�?..")
     
     # 先删除旧容器
     rm_cmd = f"docker rm {container_name}"
     execute_ssh_command(rm_cmd)
     
-    # 使用docker run重新启动,挂载外部配置文件到/config目录
+    # 使用docker run重新启动,挂载外部配置文件�?config目录
     restart_cmd = f"""docker run -d \
   --name {container_name} \
   --restart always \
@@ -146,22 +146,22 @@ EOF'"""
     if error and "Error" in error:
         print(f"   ⚠️  启动警告: {error}")
         print("   💡 尝试使用现有镜像名称...")
-        # 如果ruoyi-app:latest不存在,尝试其他可能的镜像名
+        # 如果ruoyi-app:latest不存�?尝试其他可能的镜像名
         images_cmd = "docker images | grep ruoyi"
         img_output, _ = execute_ssh_command(images_cmd)
         print(f"   📋 可用镜像:\n{img_output}")
     else:
-        print("   ✅ 容器已启动")
+        print("   �?容器已启�?)
     
     # 步骤4: 等待容器启动
-    print("\n4️⃣  等待容器启动(约30秒)...")
+    print("\n4️⃣  等待容器启动(�?0�?...")
     for i in range(30, 0, -5):
-        print(f"   ⏳ 剩余 {i} 秒...", end='\r')
+        print(f"   �?剩余 {i} �?..", end='\r')
         time.sleep(5)
-    print("   ✅ 容器启动完成")
+    print("   �?容器启动完成")
     
-    # 步骤5: 触发高并发请求以耗尽线程池
-    print("\n5️⃣  触发高并发请求以耗尽线程池...")
+    # 步骤5: 触发高并发请求以耗尽线程�?
+    print("\n5️⃣  触发高并发请求以耗尽线程�?..")
     stress_cmd = """
         for i in {1..50}; do 
             curl -s http://localhost:80/system/user/list > /dev/null & 
@@ -169,7 +169,7 @@ EOF'"""
         wait
     """
     execute_ssh_command(stress_cmd)
-    print("   ✅ 并发请求已发送(50个)")
+    print("   �?并发请求已发�?50�?")
     
     # 步骤6: 验证故障现象
     print("\n6️⃣  验证故障现象...")
@@ -191,7 +191,7 @@ EOF'"""
             found_warnings.append(keyword)
     
     if found_warnings:
-        print(f"   ✅ 故障构建成功! 检测到以下关键词:")
+        print(f"   �?故障构建成功! 检测到以下关键�?")
         for warn in found_warnings:
             print(f"      - {warn}")
         
@@ -204,7 +204,7 @@ EOF'"""
     else:
         print("   ⚠️  未检测到明显的线程池警告")
         print("   💡 可能需要更多并发请求或等待更长时间")
-        print("\n   📋 最近日志:")
+        print("\n   📋 最近日�?")
         print("   " + "-"*76)
         for line in logs.split('\n')[-10:]:
             print(f"   {line[:150]}")
@@ -217,23 +217,23 @@ EOF'"""
     print(f"   📊 响应测试结果: {response_output.strip()}")
     
     print("\n" + "="*80)
-    print("【Case01】故障环境构建完成!")
+    print("【Case01】故障环境构建完�?")
     print("="*80)
-    print("\n💡 下一步操作:")
+    print("\n💡 下一步操�?")
     print("   1. 运行诊断Agent测试诊断能力")
-    print("   2. 观察高并发下的响应时间变化")
-    print("   3. 测试完成后执行: python resumeCase.py --case 1 恢复环境")
+    print("   2. 观察高并发下的响应时间变�?)
+    print("   3. 测试完成后执�? python resumeCase.py --case 1 恢复环境")
     print()
 
 
 def generate_case03():
     """
-    Case03: MySQL连接池耗尽导致后端服务不可用
+    Case03: MySQL连接池耗尽导致后端服务不可�?
     
     故障原理:
-    - RuoYi使用Druid连接池,默认maxActive=20
+    - RuoYi使用Druid连接�?默认maxActive=20
     - 将maxActive改为2,模拟配置错误
-    - 并发请求时连接池迅速耗尽,新请求无法获取连接
+    - 并发请求时连接池迅速耗尽,新请求无法获取连�?
     """
     print("\n" + "="*80)
     print("【Case03】构建MySQL连接池耗尽故障")
@@ -248,23 +248,23 @@ def generate_case03():
     output, error = execute_ssh_command(backup_cmd)
     
     if error and "No such file" in error:
-        # 如果容器内路径不同,尝试其他常见路径
+        # 如果容器内路径不�?尝试其他常见路径
         print("   ⚠️  配置文件路径可能不同,尝试查找...")
         find_cmd = f"docker exec {container_name} find / -name 'application-druid.yml' 2>/dev/null"
         output, _ = execute_ssh_command(find_cmd)
         if output.strip():
             config_file = output.strip().split('\n')[0]
-            print(f"   ✅ 找到配置文件: {config_file}")
+            print(f"   �?找到配置文件: {config_file}")
             backup_cmd = f"docker exec {container_name} cp {config_file} {config_file}.bak"
             execute_ssh_command(backup_cmd)
         else:
-            print("   ❌ 未找到配置文件,请手动确认路径")
+            print("   �?未找到配置文�?请手动确认路�?)
             return
     
-    print("   ✅ 配置备份完成")
+    print("   �?配置备份完成")
     
-    # 步骤2: 修改连接池配置为极小值
-    print("\n2️⃣  修改Druid连接池最大连接数为2...")
+    # 步骤2: 修改连接池配置为极小�?
+    print("\n2️⃣  修改Druid连接池最大连接数�?...")
     modify_cmd = f"""docker exec {container_name} sh -c "
         sed -i 's/maxActive:.*/maxActive: 2/' {config_file} &&
         sed -i 's/minIdle:.*/minIdle: 1/' {config_file} &&
@@ -273,28 +273,28 @@ def generate_case03():
     output, error = execute_ssh_command(modify_cmd)
     
     if error:
-        print(f"   ❌ 修改配置失败: {error}")
+        print(f"   �?修改配置失败: {error}")
         return
     
-    print("   ✅ 配置修改完成")
-    print("      - maxActive: 20 → 2")
-    print("      - minIdle: 10 → 1")
-    print("      - initialSize: 5 → 1")
+    print("   �?配置修改完成")
+    print("      - maxActive: 20 �?2")
+    print("      - minIdle: 10 �?1")
+    print("      - initialSize: 5 �?1")
     
-    # 步骤3: 重启容器使配置生效
+    # 步骤3: 重启容器使配置生�?
     print("\n3️⃣  重启ruoyi-app容器...")
     restart_cmd = f"docker restart {container_name}"
     execute_ssh_command(restart_cmd)
     
     # 步骤4: 等待容器启动
-    print("\n4️⃣  等待容器启动(约30秒)...")
+    print("\n4️⃣  等待容器启动(�?0�?...")
     for i in range(30, 0, -5):
-        print(f"   ⏳ 剩余 {i} 秒...", end='\r')
+        print(f"   �?剩余 {i} �?..", end='\r')
         time.sleep(5)
-    print("   ✅ 容器启动完成")
+    print("   �?容器启动完成")
     
-    # 步骤5: 触发并发请求以耗尽连接池
-    print("\n5️⃣  触发并发请求以耗尽连接池...")
+    # 步骤5: 触发并发请求以耗尽连接�?
+    print("\n5️⃣  触发并发请求以耗尽连接�?..")
     stress_cmd = """
         for i in {1..10}; do 
             curl -s http://localhost:80/api/system/user/list > /dev/null & 
@@ -302,7 +302,7 @@ def generate_case03():
         wait
     """
     execute_ssh_command(stress_cmd)
-    print("   ✅ 并发请求已发送")
+    print("   �?并发请求已发�?)
     
     # 步骤6: 验证故障现象
     print("\n6️⃣  验证故障现象...")
@@ -324,7 +324,7 @@ def generate_case03():
             found_errors.append(keyword)
     
     if found_errors:
-        print(f"   ✅ 故障构建成功! 检测到以下错误关键词:")
+        print(f"   �?故障构建成功! 检测到以下错误关键�?")
         for err in found_errors:
             print(f"      - {err}")
         
@@ -337,59 +337,59 @@ def generate_case03():
     else:
         print("   ⚠️  未检测到明显的连接池错误")
         print("   💡 可能需要更多并发请求或等待更长时间")
-        print("\n   📋 最近日志:")
+        print("\n   📋 最近日�?")
         print("   " + "-"*76)
         for line in logs.split('\n')[-10:]:
             print(f"   {line[:150]}")
         print("   " + "-"*76)
     
     print("\n" + "="*80)
-    print("【Case03】故障环境构建完成!")
+    print("【Case03】故障环境构建完�?")
     print("="*80)
-    print("\n💡 下一步操作:")
+    print("\n💡 下一步操�?")
     print("   1. 运行诊断Agent测试诊断能力")
-    print("   2. 测试完成后执行: python resumeCase.py --case 3 恢复环境")
+    print("   2. 测试完成后执�? python resumeCase.py --case 3 恢复环境")
     print()
 
 
 def generate_case02():
     """
-    Case02: 静态资源加载失败(404/403错误)
+    Case02: 静态资源加载失�?404/403错误)
     
     故障原理:
-    - RuoYi前端页面依赖CSS/JS等静态资源
+    - RuoYi前端页面依赖CSS/JS等静态资�?
     - 删除关键静态文件或修改ResourcesConfig配置
     - 导致浏览器无法加载样式和脚本,页面显示异常
     """
     print("\n" + "="*80)
-    print("【Case02】构建静态资源加载失败故障")
+    print("【Case02】构建静态资源加载失败故�?)
     print("="*80)
     
     container_name = "ruoyi-app"
     static_dir = "/app/ruoyi-admin/src/main/resources/static"
     
-    # 步骤1: 备份静态资源目录
-    print("\n1️⃣  备份静态资源目录...")
+    # 步骤1: 备份静态资源目�?
+    print("\n1️⃣  备份静态资源目�?..")
     backup_cmd = f"docker exec {container_name} cp -r {static_dir} {static_dir}.bak"
     output, error = execute_ssh_command(backup_cmd)
     
     if error:
         print(f"   ⚠️  备份可能失败: {error}")
-        print("   💡 尝试查找静态资源目录...")
+        print("   💡 尝试查找静态资源目�?..")
         find_cmd = f"docker exec {container_name} find /app -type d -name 'static' 2>/dev/null"
         output, _ = execute_ssh_command(find_cmd)
         if output.strip():
             static_dir = output.strip().split('\n')[0]
-            print(f"   ✅ 找到静态资源目录: {static_dir}")
+            print(f"   �?找到静态资源目�? {static_dir}")
             backup_cmd = f"docker exec {container_name} cp -r {static_dir} {static_dir}.bak"
             execute_ssh_command(backup_cmd)
         else:
-            print("   ❌ 未找到静态资源目录")
+            print("   �?未找到静态资源目�?)
             return
     
-    print("   ✅ 静态资源备份完成")
+    print("   �?静态资源备份完�?)
     
-    # 步骤2: 删除关键CSS文件以模拟资源缺失
+    # 步骤2: 删除关键CSS文件以模拟资源缺�?
     print("\n2️⃣  删除关键CSS文件...")
     delete_cmd = f"""docker exec {container_name} sh -c "
         rm -rf {static_dir}/css/*.css &&
@@ -400,7 +400,7 @@ def generate_case02():
     if error:
         print(f"   ⚠️  删除操作警告: {error}")
     else:
-        print("   ✅ CSS文件已删除")
+        print("   �?CSS文件已删�?)
     
     # 步骤3: 删除部分JS文件
     print("\n3️⃣  删除部分JavaScript文件...")
@@ -413,19 +413,19 @@ def generate_case02():
     if error:
         print(f"   ⚠️  删除操作警告: {error}")
     else:
-        print("   ✅ JavaScript文件已删除")
+        print("   �?JavaScript文件已删�?)
     
-    # 步骤4: 验证文件已删除
+    # 步骤4: 验证文件已删�?
     print("\n4️⃣  验证文件删除情况...")
     check_cmd = f"docker exec {container_name} ls {static_dir}/css/ 2>&1 | head -5"
     check_output, _ = execute_ssh_command(check_cmd)
     
     if not check_output.strip() or "No such file" in check_output:
-        print("   ✅ 确认CSS目录已清空或不存在")
+        print("   �?确认CSS目录已清空或不存�?)
     else:
         print(f"   ℹ️  CSS目录内容: {check_output.strip()[:100]}")
     
-    # 步骤5: 无需重启容器,静态资源变更立即生效
+    # 步骤5: 无需重启容器,静态资源变更立即生�?
     print("\n5️⃣  静态资源变更已生效(无需重启)")
     
     # 步骤6: 验证故障现象
@@ -440,30 +440,30 @@ def generate_case02():
     print(f"   📊 JS文件状态码: {js_status.strip()}")
     
     if css_status.strip() == "404" or js_status.strip() == "404":
-        print("   ✅ 故障构建成功! 静态资源返回404错误")
+        print("   �?故障构建成功! 静态资源返�?04错误")
     else:
         print("   ⚠️  资源仍可访问,可能需要清除浏览器缓存")
     
     print("\n" + "="*80)
-    print("【Case02】故障环境构建完成!")
+    print("【Case02】故障环境构建完�?")
     print("="*80)
-    print("\n💡 下一步操作:")
-    print("   1. 在浏览器中访问前端页面,观察样式丢失情况")
+    print("\n💡 下一步操�?")
+    print("   1. 在浏览器中访问前端页�?观察样式丢失情况")
     print("   2. 打开浏览器控制台(F12),查看Network标签中的404错误")
     print("   3. 运行诊断Agent测试诊断能力")
-    print("   4. 测试完成后执行: python resumeCase.py --case 2 恢复环境")
+    print("   4. 测试完成后执�? python resumeCase.py --case 2 恢复环境")
     print()
 
 
 def generate_case05():
     """
-    Case05: MySQL慢查询导致CPU飙升和应用超时
+    Case05: MySQL慢查询导致CPU飙升和应用超�?
     
     故障原理:
-    - 在MySQL中创建一个大表(10万+行)且无索引
-    - 执行全表扫描的复杂查询
+    - 在MySQL中创建一个大�?10�?�?且无索引
+    - 执行全表扫描的复杂查�?
     - MySQL CPU使用率飙升到90%+
-    - 应用接口响应时间超过10秒甚至超时
+    - 应用接口响应时间超过10秒甚至超�?
     """
     print("\n" + "="*80)
     print("【Case05】构建MySQL慢查询导致CPU飙升故障")
@@ -475,19 +475,19 @@ def generate_case05():
     db_name = "ry"
     
     # 步骤1: 检查MySQL容器是否运行
-    print("\n1️⃣  检查MySQL容器状态...")
+    print("\n1️⃣  检查MySQL容器状�?..")
     check_cmd = f"docker ps | grep {mysql_container}"
     output, _ = execute_ssh_command(check_cmd)
     
     if mysql_container not in output:
-        print(f"   ❌ MySQL容器 '{mysql_container}' 未运行")
+        print(f"   �?MySQL容器 '{mysql_container}' 未运�?)
         print("   💡 请确认MySQL容器名称是否正确")
         return
     
-    print("   ✅ MySQL容器运行中")
+    print("   �?MySQL容器运行�?)
     
-    # 步骤2: 创建测试大表(无索引)
-    print("\n2️⃣  创建测试大表(10万行,无索引)...")
+    # 步骤2: 创建测试大表(无索�?
+    print("\n2️⃣  创建测试大表(10万行,无索�?...")
     create_table_sql = f"""
     DROP TABLE IF EXISTS test_slow_query;
     CREATE TABLE test_slow_query (
@@ -503,9 +503,9 @@ def generate_case05():
     output, error = execute_ssh_command(create_cmd)
     
     if error and "ERROR" in error:
-        print(f"   ⚠️  创建表警告: {error[:200]}")
+        print(f"   ⚠️  创建表警�? {error[:200]}")
     else:
-        print("   ✅ 测试表创建成功")
+        print("   �?测试表创建成�?)
     
     # 步骤3: 插入大量测试数据
     print("\n3️⃣  插入10万行测试数据(可能需要几分钟)...")
@@ -524,13 +524,13 @@ def generate_case05():
     """
     
     insert_cmd = f"docker exec {mysql_container} mysql -u{db_user} -p'{db_password}' {db_name} -e \"{insert_sql.replace(chr(10), ' ')}\""
-    print("   ⏳ 正在插入数据,请稍候...")
+    print("   �?正在插入数据,请稍�?..")
     output, error = execute_ssh_command(insert_cmd, timeout=120)
     
     if error and "ERROR" in error:
         print(f"   ⚠️  插入数据警告: {error[:200]}")
         print("   💡 尝试使用简化版插入...")
-        # 简化版:只插入1万行
+        # 简化版:只插�?万行
         simple_insert = """
         INSERT INTO test_slow_query (name, email, description)
         SELECT CONCAT('user_', n), CONCAT('user_', n, '@test.com'), 'Test data'
@@ -538,12 +538,12 @@ def generate_case05():
         """
         simple_cmd = f"docker exec {mysql_container} mysql -u{db_user} -p'{db_password}' {db_name} -e \"{simple_insert.replace(chr(10), ' ')}\""
         execute_ssh_command(simple_cmd, timeout=60)
-        print("   ✅ 已插入1万行测试数据")
+        print("   �?已插�?万行测试数据")
     else:
-        print("   ✅ 已插入10万行测试数据")
+        print("   �?已插�?0万行测试数据")
     
-    # 步骤4: 验证数据量
-    print("\n4️⃣  验证数据量...")
+    # 步骤4: 验证数据�?
+    print("\n4️⃣  验证数据�?..")
     count_sql = "SELECT COUNT(*) FROM test_slow_query;"
     count_cmd = f"docker exec {mysql_container} mysql -u{db_user} -p'{db_password}' {db_name} -e \"{count_sql}\""
     count_output, _ = execute_ssh_command(count_cmd)
@@ -562,10 +562,10 @@ def generate_case05():
     # 在后台持续运行慢查询
     run_query_cmd = f"""docker exec {mysql_container} nohup mysql -u{db_user} -p'{db_password}' {db_name} -e \"{slow_query_sql.replace(chr(10), ' ')}\" > /dev/null 2>&1 &"""
     execute_ssh_command(run_query_cmd)
-    print("   ✅ 慢查询已在后台运行")
+    print("   �?慢查询已在后台运�?)
     
-    # 步骤6: 等待并验证CPU使用率
-    print("\n6️⃣  等待10秒后检查CPU使用率...")
+    # 步骤6: 等待并验证CPU使用�?
+    print("\n6️⃣  等待10秒后检查CPU使用�?..")
     time.sleep(10)
     
     cpu_check_cmd = "top -bn1 | grep -i mysql | head -3"
@@ -579,12 +579,12 @@ def generate_case05():
         print("   ⚠️  未检测到MySQL进程")
     
     print("\n" + "="*80)
-    print("【Case05】故障环境构建完成!")
+    print("【Case05】故障环境构建完�?")
     print("="*80)
-    print("\n💡 下一步操作:")
+    print("\n💡 下一步操�?")
     print("   1. 运行诊断Agent测试诊断能力")
     print("   2. 观察CPU使用率和查询响应时间")
-    print("   3. 测试完成后执行: python resumeCase.py --case 5 恢复环境")
+    print("   3. 测试完成后执�? python resumeCase.py --case 5 恢复环境")
     print()
 
 
@@ -593,22 +593,22 @@ def generate_case03():
     print("\n" + "="*80)
     print("【Case03】构建Docker容器OOM重启故障")
     print("="*80)
-    print("\n⚠️  此场景暂未实现,敬请期待...")
+    print("\n⚠️  此场景暂未实�?敬请期待...")
     print()
 
 
 def generate_case04():
     """
-    Case04: JVM堆内存溢出导致应用崩溃
+    Case04: JVM堆内存溢出导致应用崩�?
     
     故障原理:
-    - RuoYi是Spring Boot应用,运行在JVM上
+    - RuoYi是Spring Boot应用,运行在JVM�?
     - 正常JVM配置: -Xms256m -Xmx512m
-    - 将堆内存限制为极小值(如64m),快速触发OutOfMemoryError
-    - 与Case03的区别: Case03是Linux内核OOM Killer杀死容器,Case04是JVM内部堆内存溢出
+    - 将堆内存限制为极小�?�?4m),快速触发OutOfMemoryError
+    - 与Case03的区�? Case03是Linux内核OOM Killer杀死容�?Case04是JVM内部堆内存溢�?
     """
     print("\n" + "="*80)
-    print("【Case04】构建JVM堆内存溢出故障")
+    print("【Case04】构建JVM堆内存溢出故�?)
     print("="*80)
     
     container_name = "ruoyi-app"
@@ -621,23 +621,23 @@ def generate_case04():
     
     if error:
         print(f"   ⚠️  备份失败: {error}")
-        print("   💡 请确认文件路径是否正确")
+        print("   💡 请确认文件路径是否正�?)
         return
     
-    print("   ✅ 配置备份完成")
+    print("   �?配置备份完成")
     
-    # 步骤2: 修改JVM参数,将堆内存限制为极小值
+    # 步骤2: 修改JVM参数,将堆内存限制为极小�?
     print("\n2️⃣  修改JVM堆内存参数为64m...")
     modify_cmd = f"""sed -i 's/-Xms256m/-Xms64m/g; s/-Xmx512m/-Xmx64m/g' {compose_file}"""
     output, error = execute_ssh_command(modify_cmd)
     
     if error:
-        print(f"   ❌ 修改配置失败: {error}")
+        print(f"   �?修改配置失败: {error}")
         return
     
-    print("   ✅ JVM参数修改完成")
-    print("      - Xms: 256m → 64m")
-    print("      - Xmx: 512m → 64m")
+    print("   �?JVM参数修改完成")
+    print("      - Xms: 256m �?64m")
+    print("      - Xmx: 512m �?64m")
     
     # 步骤3: 重启容器使新JVM参数生效
     print("\n3️⃣  重启ruoyi-app容器...")
@@ -645,14 +645,14 @@ def generate_case04():
     execute_ssh_command(restart_cmd)
     
     # 步骤4: 等待容器启动
-    print("\n4️⃣  等待容器启动(约30秒)...")
+    print("\n4️⃣  等待容器启动(�?0�?...")
     for i in range(30, 0, -5):
-        print(f"   ⏳ 剩余 {i} 秒...", end='\r')
+        print(f"   �?剩余 {i} �?..", end='\r')
         time.sleep(5)
-    print("   ✅ 容器启动完成")
+    print("   �?容器启动完成")
     
-    # 步骤5: 触发大对象创建以快速耗尽堆内存
-    print("\n5️⃣  触发大对象创建以耗尽堆内存...")
+    # 步骤5: 触发大对象创建以快速耗尽堆内�?
+    print("\n5️⃣  触发大对象创建以耗尽堆内�?..")
     # 通过访问需要大量内存的接口来触发OOM
     stress_cmd = """
         for i in {1..20}; do 
@@ -661,7 +661,7 @@ def generate_case04():
         wait
     """
     execute_ssh_command(stress_cmd)
-    print("   ✅ 并发请求已发送")
+    print("   �?并发请求已发�?)
     
     # 步骤6: 验证故障现象
     print("\n6️⃣  验证故障现象...")
@@ -682,7 +682,7 @@ def generate_case04():
             found_errors.append(keyword)
     
     if found_errors:
-        print(f"   ✅ 故障构建成功! 检测到以下错误关键词:")
+        print(f"   �?故障构建成功! 检测到以下错误关键�?")
         for err in found_errors:
             print(f"      - {err}")
         
@@ -695,29 +695,29 @@ def generate_case04():
     else:
         print("   ⚠️  未检测到明显的OutOfMemoryError")
         print("   💡 可能需要更多并发请求或等待更长时间")
-        print("\n   📋 最近日志:")
+        print("\n   📋 最近日�?")
         print("   " + "-"*76)
         for line in logs.split('\n')[-10:]:
             print(f"   {line[:150]}")
         print("   " + "-"*76)
     
-    # 检查容器状态
-    print("\n7️⃣  检查容器状态...")
+    # 检查容器状�?
+    print("\n7️⃣  检查容器状�?..")
     status_cmd = f"docker ps | grep {container_name}"
     status_output, _ = execute_ssh_command(status_cmd)
     
     if container_name in status_output:
-        print("   ℹ️  容器仍在运行(JVM崩溃但Docker容器未退出)")
+        print("   ℹ️  容器仍在运行(JVM崩溃但Docker容器未退�?")
     else:
-        print("   ⚠️  容器已退出")
+        print("   ⚠️  容器已退�?)
     
     print("\n" + "="*80)
-    print("【Case04】故障环境构建完成!")
+    print("【Case04】故障环境构建完�?")
     print("="*80)
-    print("\n💡 下一步操作:")
+    print("\n💡 下一步操�?")
     print("   1. 运行诊断Agent测试诊断能力")
     print("   2. 注意区分JVM OOM和Linux OOM Killer(Case03)")
-    print("   3. 测试完成后执行: python resumeCase.py --case 4 恢复环境")
+    print("   3. 测试完成后执�? python resumeCase.py --case 4 恢复环境")
     print()
 
 
@@ -726,12 +726,12 @@ def generate_case05():
     print("\n" + "="*80)
     print("【Case05】构建MySQL主从复制延迟故障")
     print("="*80)
-    print("\n⚠️  此场景暂未实现,敬请期待...")
+    print("\n⚠️  此场景暂未实�?敬请期待...")
     print()
 
 
 def main():
-    """主函数"""
+    """主函�?""
     parser = argparse.ArgumentParser(
         description='构建故障测试环境',
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -755,18 +755,18 @@ def main():
         print("\n" + "="*80)
         print("请选择要构建的故障场景:")
         print("="*80)
-        print("1. MySQL连接池耗尽导致后端服务不可用")
-        print("2. MySQL慢查询导致CPU飙升和应用超时")
+        print("1. MySQL连接池耗尽导致后端服务不可�?)
+        print("2. MySQL慢查询导致CPU飙升和应用超�?)
         print("3. Docker容器内存泄漏导致频繁OOM重启")
         print("4. Nginx反向代理配置错误导致502/504")
-        print("5. MySQL主从复制延迟导致数据不一致")
+        print("5. MySQL主从复制延迟导致数据不一�?)
         print("="*80)
         
         try:
             choice = input("\n请输入case编号(1-5): ").strip()
             args.case = int(choice)
         except (ValueError, EOFError):
-            print("❌ 无效输入")
+            print("�?无效输入")
             return
     
     # 根据选择调用对应函数
@@ -779,10 +779,10 @@ def main():
     }
     
     if args.case in case_functions:
-        print(f"\n🚀 开始构建 Case{args.case:02d} 故障环境...")
+        print(f"\n🚀 开始构�?Case{args.case:02d} 故障环境...")
         case_functions[args.case]()
     else:
-        print(f"❌ 无效的case编号: {args.case}")
+        print(f"�?无效的case编号: {args.case}")
 
 
 if __name__ == "__main__":

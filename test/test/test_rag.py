@@ -19,8 +19,8 @@ async def test_rag_routing():
 
     test_cases = [
         # ("2025年人工智能有哪些发展趋势?", "rag_query"),
-        # ("大聪明牌口服液的功效是什么?", "rag_query"),
-        ("大聪明牌定价是多少?", "rag_query"),
+        # ("大聪明牌口服液的功效是什�?", "rag_query"),
+        ("大聪明牌定价是多�?", "rag_query"),
         # ("计算 25 + 17", "calculator"),
         
     ]
@@ -35,12 +35,12 @@ async def test_rag_routing():
             print(f"输出: {state.get('output', '')[:200]}")
 
             if state.get('decision') == expected_intent:
-                print("状态: PASS")
+                print("状�? PASS")
             else:
-                print("状态: FAIL - 意图识别错误")
+                print("状�? FAIL - 意图识别错误")
         except Exception as e:
             print(f"错误: {str(e)[:200]}")
-            print("状态: ERROR")
+            print("状�? ERROR")
 
     print("\n" + "=" * 70)
 

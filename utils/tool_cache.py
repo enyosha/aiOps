@@ -60,7 +60,8 @@ class GlobalToolCache:
         self._cache: Dict[str, ToolCacheEntry] = {}
         self._sessions: Dict[str, ClientSession] = {}
         self._default_ttl = 300  # 默认 5 分钟
-        self._mcp_config_path = Path(__file__).parent / "mcp.json"
+        # mcp.json 在 Routing 目录下
+        self._mcp_config_path = Path(__file__).parent.parent / "Routing" / "mcp.json"
         self._mcp_config: Optional[Dict] = None
         self._initialized = True
     
@@ -144,7 +145,7 @@ class GlobalToolCache:
         args = config.get("args", [])
         
         # 修正路径：从 Routing 目录解析相对路径
-        routing_dir = os.path.dirname(__file__)  # Routing 目录
+        routing_dir = os.path.join(os.path.dirname(__file__), "..", "Routing")  # Routing 目录
         
         # 解析环境变量和路径
         processed_args = []

@@ -1,9 +1,9 @@
 """
 测试优化后的诊断逻辑
-验证：
-1. 可疑容器检测
-2. 空日志智能处理
-3. 准确的诊断报告生成
+验证�?
+1. 可疑容器检�?
+2. 空日志智能处�?
+3. 准确的诊断报告生�?
 """
 import asyncio
 import sys
@@ -23,7 +23,7 @@ async def test_optimized_diagnosis():
     
     # 测试场景：应用无响应（但实际所有服务正常）
     alert_event = {
-        "alert_name": "应用无响应",
+        "alert_name": "应用无响�?,
         "alert_type": "application_unresponsive",
         "alert_time": "2026-05-13T19:30:00",
         "description": "用户反馈前端页面无法访问"
@@ -31,7 +31,7 @@ async def test_optimized_diagnosis():
     
     container_name = "ruoyi-app"
     
-    print(f"\n开始诊断: {alert_event['alert_name']}")
+    print(f"\n开始诊�? {alert_event['alert_name']}")
     print(f"容器名称: {container_name}")
     print("-"*70)
     
@@ -44,25 +44,25 @@ async def test_optimized_diagnosis():
         
         if result.get('status') == 'success' and result.get('diagnosis'):
             diagnosis = result['diagnosis']
-            print(f"\n置信度: {diagnosis.get('confidence', 'N/A')}")
+            print(f"\n置信�? {diagnosis.get('confidence', 'N/A')}")
             print(f"\n诊断内容:\n{diagnosis.get('content', '')}")
             
             # 检查是否提到了可疑容器
             content = diagnosis.get('content', '')
             if '可疑容器' in content or 'frontend' in content.lower():
-                print("\n[OK] 检测到前端相关问题的分析")
+                print("\n[OK] 检测到前端相关问题的分�?)
             else:
-                print("\n[WARN] 未检测到前端相关问题的分析")
+                print("\n[WARN] 未检测到前端相关问题的分�?)
                 
         else:
-            print(f"状态: {result.get('status', 'unknown')}")
+            print(f"状�? {result.get('status', 'unknown')}")
             if result.get('status') == 'error':
                 print(f"错误信息: {result.get('message', '')}")
             else:
                 print("未获取到诊断结果")
             
     except Exception as e:
-        print(f"\n[ERROR] 诊断过程中出错: {e}")
+        print(f"\n[ERROR] 诊断过程中出�? {e}")
         import traceback
         traceback.print_exc()
 

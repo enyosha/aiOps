@@ -22,7 +22,7 @@ _Collection = None
 
 try:
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-    from Routing.milvus_tunnel_manager import MilvusTunnelManager as _MilvusTunnelManager
+    from utils.milvus_tunnel_manager import MilvusTunnelManager as _MilvusTunnelManager
     from pymilvus import (
         connections as _milvus_connections,
         Collection as _Collection,

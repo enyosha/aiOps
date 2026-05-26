@@ -1,5 +1,5 @@
 """
-测试Log-Reader MCP的MySQL检查工具
+测试Log-Reader MCP的MySQL检查工�?
 """
 import asyncio
 import sys
@@ -13,17 +13,17 @@ load_dotenv()
 async def test_mysql_check():
     """测试check_mysql_status工具"""
     print("\n" + "="*80)
-    print("测试MySQL状态检查工具")
+    print("测试MySQL状态检查工�?)
     print("="*80)
     
-    from Routing.tool_cache import tool_cache
+    from utils.tool_cache import tool_cache
     
-    # 清除缓存，重新加载
+    # 清除缓存，重新加�?
     tool_cache._cache.clear()
     
     tools = await tool_cache.get_tools("log-reader")
     
-    print(f"\n✅ 成功加载 {len(tools)} 个工具")
+    print(f"\n�?成功加载 {len(tools)} 个工�?)
     
     # 测试check_mysql_status
     print("\n" + "-"*80)
@@ -46,23 +46,23 @@ async def test_mysql_check():
             mysql_data = result
         
         if mysql_data.get('status') == 'success':
-            print(f"MySQL运行状态: {'✅ 运行中' if mysql_data.get('mysql_running') else '❌ 未运行'}")
+            print(f"MySQL运行状�? {'�?运行�? if mysql_data.get('mysql_running') else '�?未运�?}")
             print(f"\n进程信息:\n{mysql_data.get('process_info', 'N/A')}")
             print(f"\n端口信息:\n{mysql_data.get('port_info', 'N/A')}")
             print(f"\nDocker信息:\n{mysql_data.get('docker_info', 'N/A')}")
         else:
-            print(f"❌ 错误: {mysql_data.get('message')}")
+            print(f"�?错误: {mysql_data.get('message')}")
     else:
-        print("❌ 未找到check_mysql_status工具")
+        print("�?未找到check_mysql_status工具")
     
     print("\n" + "="*80)
-    print("✅ MySQL检查测试完成！")
+    print("�?MySQL检查测试完成！")
     print("="*80)
 
 if __name__ == "__main__":
     try:
         asyncio.run(test_mysql_check())
     except Exception as e:
-        print(f"\n❌ 错误: {str(e)}")
+        print(f"\n�?错误: {str(e)}")
         import traceback
         traceback.print_exc()

@@ -1,12 +1,12 @@
 """
-统一测试脚本 - 通过问答形式运行指定Case并生成诊断报告
+统一测试脚本 - 通过问答形式运行指定Case并生成诊断报�?
 
 功能:
 1. 交互式选择要测试的Case
 2. 自动构建故障环境
 3. 调用DiagnosisAgent进行诊断
 4. 实时打印诊断过程到Console
-5. 保存完整日志到 reports/casexx_YYYYMMDD_HHMMSS.txt
+5. 保存完整日志�?reports/casexx_YYYYMMDD_HHMMSS.txt
 6. 自动恢复环境
 7. 生成评估报告
 """
@@ -25,7 +25,7 @@ load_dotenv()
 
 def setup_logger(case_id):
     """
-    设置日志记录器,同时输出到Console和文件
+    设置日志记录�?同时输出到Console和文�?
     
     Args:
         case_id: Case编号 (1-5)
@@ -35,7 +35,7 @@ def setup_logger(case_id):
     """
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     
-    # 日志文件相对于 troubleshooting 目录
+    # 日志文件相对�?troubleshooting 目录
     log_dir = os.path.join(os.path.dirname(__file__), "reports")
     os.makedirs(log_dir, exist_ok=True)
     log_file = os.path.join(log_dir, f"case{case_id}_{timestamp}.txt")
@@ -66,7 +66,7 @@ def setup_logger(case_id):
 
 
 def print_separator(logger, char="=", length=80):
-    """打印分隔线"""
+    """打印分隔�?""
     line = char * length
     logger.info(line)
 
@@ -89,7 +89,7 @@ def get_alert_event(case_id):
             "description": "前端请求响应时间显著增加,高并发时部分请求返回504 Gateway Timeout"
         },
         2: {
-            "alert_name": "静态资源加载失败",
+            "alert_name": "静态资源加载失�?,
             "alert_type": "static_resource_404",
             "alert_time": datetime.now().isoformat(),
             "description": "前端页面样式丢失,CSS/JS文件返回404错误,页面显示异常"
@@ -107,16 +107,16 @@ def get_alert_event(case_id):
             "description": ""
         },
         # 4: {
-        #     "alert_name": "JVM堆内存溢出",
+        #     "alert_name": "JVM堆内存溢�?,
         #     "alert_type": "jvm_out_of_memory",
         #     "alert_time": datetime.now().isoformat(),
-        #     "description": "应用突然崩溃,容器仍在运行但无法提供服务,日志显示OutOfMemoryError"
+        #     "description": "应用突然崩溃,容器仍在运行但无法提供服�?日志显示OutOfMemoryError"
         # },
         5: {
             "alert_name": "MySQL慢查询导致CPU飙升",
             "alert_type": "mysql_slow_query_high_cpu",
             "alert_time": datetime.now().isoformat(),
-            "description": "系统CPU使用率持续>90%,前端页面加载缓慢,后端接口响应超时"
+            "description": "系统CPU使用率持�?90%,前端页面加载缓慢,后端接口响应超时"
         }
     }
     
@@ -149,19 +149,19 @@ async def run_diagnosis(alert_event, container_name="ruoyi-app"):
         logger.info("🔍 开始调用DiagnosisAgent进行诊断...")
         print_separator(logger, "-", 80)
         
-        # 捕获 DiagnosisAgent 的输出
+        # 捕获 DiagnosisAgent 的输�?
         old_stdout = sys.stdout
         captured_output = StringIO()
         
         class DualOutput:
-            """同时输出到控制台和日志文件"""
+            """同时输出到控制台和日志文�?""
             def __init__(self, original_stdout, logger):
                 self.original_stdout = original_stdout
                 self.logger = logger
                 self.buffer = ""
             
             def write(self, text):
-                # 写入原始stdout(控制台)
+                # 写入原始stdout(控制�?
                 self.original_stdout.write(text)
                 self.original_stdout.flush()
                 
@@ -183,7 +183,7 @@ async def run_diagnosis(alert_event, container_name="ruoyi-app"):
         
         return result
     except Exception as e:
-        logger.error(f"❌ 诊断失败: {str(e)}")
+        logger.error(f"�?诊断失败: {str(e)}")
         import traceback
         logger.error(traceback.format_exc())
         return {
@@ -222,24 +222,24 @@ def evaluate_diagnosis(case_id, diagnosis_result):
     data_sources = diagnosis.get("data_sources", {})
     iteration_count = diagnosis_result.get("iteration_count", 0)
     
-    # 准确性评估
+    # 准确性评�?
     accuracy_keywords = {
         1: ["tomcat", "thread", "线程", "pool"],
         2: ["404", "static", "资源", "css", "js"],
-        3: ["connection pool", "连接池", "druid", "maxactive"],
+        3: ["connection pool", "连接�?, "druid", "maxactive"],
         4: ["outofmemory", "oom", "heap", "jvm", "内存溢出"],
-        5: ["slow query", "慢查询", "cpu", "mysql", "索引"]
+        5: ["slow query", "慢查�?, "cpu", "mysql", "索引"]
     }
     
     keywords = accuracy_keywords.get(case_id, [])
     if any(kw.lower() in content.lower() for kw in keywords):
-        evaluation["accuracy"] = "✓ 准确定位问题"
-        evaluation["comments"].append(f"正确识别到{keywords[0]}相关关键词")
+        evaluation["accuracy"] = "�?准确定位问题"
+        evaluation["comments"].append(f"正确识别到{keywords[0]}相关关键�?)
     else:
-        evaluation["accuracy"] = "✗ 未准确定位"
+        evaluation["accuracy"] = "�?未准确定�?
         evaluation["comments"].append("未能识别关键故障特征")
     
-    # 完整性评估
+    # 完整性评�?
     data_collected_count = sum([
         data_sources.get("logs", False),
         data_sources.get("memory", False),
@@ -248,63 +248,63 @@ def evaluate_diagnosis(case_id, diagnosis_result):
     ])
     
     if data_collected_count >= 2:
-        evaluation["completeness"] = f"✓ 收集了{data_collected_count}类数据"
+        evaluation["completeness"] = f"�?收集了{data_collected_count}类数�?
         evaluation["comments"].append("数据采集较为完整")
     elif data_collected_count == 1:
-        evaluation["completeness"] = "△ 仅收集1类数据"
-        evaluation["comments"].append("建议收集更多数据源")
+        evaluation["completeness"] = "�?仅收�?类数�?
+        evaluation["comments"].append("建议收集更多数据�?)
     else:
-        evaluation["completeness"] = "✗ 未收集数据"
+        evaluation["completeness"] = "�?未收集数�?
         evaluation["comments"].append("未能获取任何实时数据")
     
-    # 可操作性评估
+    # 可操作性评�?
     action_keywords = ["docker", "命令", "执行", "修改", "配置", "重启", "`"]
     has_commands = any(kw in content for kw in action_keywords)
     
     if has_commands and ("立即" in content or "建议" in content):
-        evaluation["actionability"] = "✓ 给出具体操作建议"
-        evaluation["comments"].append("包含可执行的命令或配置修改")
+        evaluation["actionability"] = "�?给出具体操作建议"
+        evaluation["comments"].append("包含可执行的命令或配置修�?)
     elif has_commands:
-        evaluation["actionability"] = "△ 有部分建议"
-        evaluation["comments"].append("建议不够具体或缺少步骤")
+        evaluation["actionability"] = "�?有部分建�?
+        evaluation["comments"].append("建议不够具体或缺少步�?)
     else:
-        evaluation["actionability"] = "✗ 缺少可操作建议"
+        evaluation["actionability"] = "�?缺少可操作建�?
         evaluation["comments"].append("未提供具体的修复方案")
     
     # 效率评估
     if iteration_count <= 3:
-        evaluation["efficiency"] = f"✓ 高效({iteration_count}次迭代)"
+        evaluation["efficiency"] = f"�?高效({iteration_count}次迭�?"
     elif iteration_count <= 5:
-        evaluation["efficiency"] = f"△ 一般({iteration_count}次迭代)"
+        evaluation["efficiency"] = f"�?一�?{iteration_count}次迭�?"
     else:
-        evaluation["efficiency"] = f"✗ 较慢({iteration_count}次迭代)"
+        evaluation["efficiency"] = f"�?较慢({iteration_count}次迭�?"
     
     # 总体评分
     scores = []
-    if "✓" in evaluation["accuracy"]:
+    if "�? in evaluation["accuracy"]:
         scores.append(3)
-    elif "△" in evaluation["accuracy"]:
+    elif "�? in evaluation["accuracy"]:
         scores.append(2)
     else:
         scores.append(0)
     
-    if "✓" in evaluation["completeness"]:
+    if "�? in evaluation["completeness"]:
         scores.append(2)
-    elif "△" in evaluation["completeness"]:
+    elif "�? in evaluation["completeness"]:
         scores.append(1)
     else:
         scores.append(0)
     
-    if "✓" in evaluation["actionability"]:
+    if "�? in evaluation["actionability"]:
         scores.append(3)
-    elif "△" in evaluation["actionability"]:
+    elif "�? in evaluation["actionability"]:
         scores.append(2)
     else:
         scores.append(0)
     
-    if "✓" in evaluation["efficiency"]:
+    if "�? in evaluation["efficiency"]:
         scores.append(2)
-    elif "△" in evaluation["efficiency"]:
+    elif "�? in evaluation["efficiency"]:
         scores.append(1)
     else:
         scores.append(0)
@@ -317,14 +317,14 @@ def evaluate_diagnosis(case_id, diagnosis_result):
 
 async def test_case(case_id, mode=1):
     """
-    测试单个Case的完整流程
+    测试单个Case的完整流�?
     
     Args:
         case_id: Case编号 (1-5)
         mode: 执行模式
-            - 1: 全流程 (Generate → Test → Resume)
-            - 2: 仅测试 (Test only,跳过Generate)
-            - 3: 仅恢复 (Resume only,跳过Generate和Test)
+            - 1: 全流�?(Generate �?Test �?Resume)
+            - 2: 仅测�?(Test only,跳过Generate)
+            - 3: 仅恢�?(Resume only,跳过Generate和Test)
     """
     global logger
     
@@ -332,14 +332,14 @@ async def test_case(case_id, mode=1):
     logger, log_file = setup_logger(case_id)
     
     print_separator(logger)
-    logger.info(f"🧪 Case{case_id:02d} 测试开始")
+    logger.info(f"🧪 Case{case_id:02d} 测试开�?)
     logger.info(f"📅 测试时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     logger.info(f"📄 报告文件: {log_file}")
     print_separator(logger)
     
     # 步骤1: 构建故障环境
     if mode == 1:
-        logger.info("\n【阶段1】构建故障环境")
+        logger.info("\n【阶�?】构建故障环�?)
         print_separator(logger, "-")
         
         try:
@@ -358,19 +358,19 @@ async def test_case(case_id, mode=1):
             
             if case_id in case_functions:
                 case_functions[case_id]()
-                logger.info("\n✅ 故障环境构建成功!\n")
+                logger.info("\n�?故障环境构建成功!\n")
             else:
-                logger.error(f"❌ 无效的Case编号: {case_id}")
+                logger.error(f"�?无效的Case编号: {case_id}")
                 return
         except Exception as e:
-            logger.error(f"❌ 故障环境构建失败: {str(e)}")
+            logger.error(f"�?故障环境构建失败: {str(e)}")
             import traceback
             logger.error(traceback.format_exc())
             return
         
-        # 中断判断: Generate完成后询问是否继续
+        # 中断判断: Generate完成后询问是否继�?
         logger.info("\n" + "="*80)
-        logger.info("⚠️  故障环境已构建完成!")
+        logger.info("⚠️  故障环境已构建完�?")
         logger.info("="*80)
         confirm = input("是否继续执行诊断测试? (y/n): ").strip().lower()
         
@@ -380,21 +380,21 @@ async def test_case(case_id, mode=1):
             logger.info("\n退出测试\n")
             return
     elif mode == 2:
-        logger.info("\n【阶段1】跳过(模式2:仅测试)")
+        logger.info("\n【阶�?】跳�?模式2:仅测�?")
         print_separator(logger, "-")
         logger.info("⚠️  请确保故障环境已通过其他方式构建\n")
     elif mode == 3:
-        logger.info("\n【阶段1】跳过(模式3:仅恢复)")
+        logger.info("\n【阶�?】跳�?模式3:仅恢�?")
         print_separator(logger, "-")
     
-    # 等待故障稳定 & 执行测试(仅mode 1和2)
+    # 等待故障稳定 & 执行测试(仅mode 1�?)
     if mode in [1, 2]:
-        logger.info("⏳ 等待30秒让故障现象稳定...")
+        logger.info("�?等待30秒让故障现象稳定...")
         import time
         time.sleep(30)
         
-        # 步骤2: 构造告警事件
-        logger.info("\n【阶段2】构造告警事件")
+        # 步骤2: 构造告警事�?
+        logger.info("\n【阶�?】构造告警事�?)
         print_separator(logger, "-")
         
         alert_event = get_alert_event(case_id)
@@ -403,57 +403,57 @@ async def test_case(case_id, mode=1):
         logger.info(f"告警描述: {alert_event['description']}")
         
         # 步骤3: 调用诊断Agent
-        logger.info("\n【阶段3】执行诊断")
+        logger.info("\n【阶�?】执行诊�?)
         print_separator(logger, "-")
         
         diagnosis_result = await run_diagnosis(alert_event, "ruoyi-app")
         
         if diagnosis_result.get("status") == "success":
-            logger.info("\n✅ 诊断完成!")
+            logger.info("\n�?诊断完成!")
             
             # 打印诊断结果
             diagnosis = diagnosis_result.get("diagnosis", {})
             content = diagnosis.get("content", "")
             
-            logger.info("\n【诊断结果】")
+            logger.info("\n【诊断结果�?)
             print_separator(logger, "-")
             logger.info(content)
             
             # 打印数据收集情况
             data_sources = diagnosis.get("data_sources", {})
-            logger.info("\n【数据收集情况】")
+            logger.info("\n【数据收集情况�?)
             print_separator(logger, "-")
-            logger.info(f"日志数据: {'✓' if data_sources.get('logs') else '✗'}")
-            logger.info(f"内存信息: {'✓' if data_sources.get('memory') else '✗'}")
-            logger.info(f"CPU信息: {'✓' if data_sources.get('cpu') else '✗'}")
-            logger.info(f"服务状态: {'✓' if data_sources.get('service_status') else '✗'}")
+            logger.info(f"日志数据: {'�? if data_sources.get('logs') else '�?}")
+            logger.info(f"内存信息: {'�? if data_sources.get('memory') else '�?}")
+            logger.info(f"CPU信息: {'�? if data_sources.get('cpu') else '�?}")
+            logger.info(f"服务状�? {'�? if data_sources.get('service_status') else '�?}")
             logger.info(f"迭代次数: {diagnosis_result.get('iteration_count', 0)}")
         else:
-            logger.error(f"\n❌ 诊断失败: {diagnosis_result.get('message')}")
+            logger.error(f"\n�?诊断失败: {diagnosis_result.get('message')}")
         
         # 步骤4: 评估诊断结果
-        logger.info("\n【阶段4】评估诊断质量")
+        logger.info("\n【阶�?】评估诊断质�?)
         print_separator(logger, "-")
         
         evaluation = evaluate_diagnosis(case_id, diagnosis_result)
         
-        logger.info(f"准确性: {evaluation['accuracy']}")
-        logger.info(f"完整性: {evaluation['completeness']}")
-        logger.info(f"可操作性: {evaluation['actionability']}")
+        logger.info(f"准确�? {evaluation['accuracy']}")
+        logger.info(f"完整�? {evaluation['completeness']}")
+        logger.info(f"可操作�? {evaluation['actionability']}")
         logger.info(f"效率: {evaluation['efficiency']}")
         logger.info(f"\n总体评分: {evaluation['overall_score']}")
         
-        logger.info("\n【评估意见】")
+        logger.info("\n【评估意见�?)
         for comment in evaluation['comments']:
-            logger.info(f"  • {comment}")
+            logger.info(f"  �?{comment}")
     elif mode == 3:
-        logger.info("【阶段2-4】跳过(模式3:仅恢复)")
+        logger.info("【阶�?-4】跳�?模式3:仅恢�?")
         print_separator(logger, "-")
-        diagnosis_result = {}  # 空字典,避免后续引用错误
+        diagnosis_result = {}  # 空字�?避免后续引用错误
     
     # 步骤5: 恢复环境
     if mode in [1, 3]:
-        logger.info("\n【阶段5】恢复环境")
+        logger.info("\n【阶�?】恢复环�?)
         print_separator(logger, "-")
         
         try:
@@ -472,28 +472,28 @@ async def test_case(case_id, mode=1):
             
             if case_id in resume_functions:
                 resume_functions[case_id]()
-                logger.info("\n✅ 环境恢复成功!\n")
+                logger.info("\n�?环境恢复成功!\n")
             else:
-                logger.error(f"❌ 无效的Case编号: {case_id}")
+                logger.error(f"�?无效的Case编号: {case_id}")
         except Exception as e:
-            logger.error(f"❌ 环境恢复失败: {str(e)}")
+            logger.error(f"�?环境恢复失败: {str(e)}")
             import traceback
             logger.error(traceback.format_exc())
     elif mode == 2:
-        logger.info("\n【阶段5】跳过(模式2:仅测试)")
+        logger.info("\n【阶�?】跳�?模式2:仅测�?")
         print_separator(logger, "-")
-        logger.info("⚠️  请手动执行恢复:\n")
+        logger.info("⚠️  请手动执行恢�?\n")
         logger.info(f"   python run_test.py --case {case_id} --mode 3\n")
     
     # 测试完成
     print_separator(logger)
-    logger.info(f"✅ Case{case_id:02d} 测试完成!")
+    logger.info(f"�?Case{case_id:02d} 测试完成!")
     logger.info(f"📄 完整日志已保存到: {log_file}")
     print_separator(logger)
 
 
 def main():
-    """主函数"""
+    """主函�?""
     print("\n" + "="*80)
     print("AI运维诊断Agent - 故障场景测试工具")
     print("="*80)
@@ -503,7 +503,7 @@ def main():
     parser = argparse.ArgumentParser(description='运维故障测试工具')
     parser.add_argument('--case', type=int, choices=[1,2,3,4,5], help='Case编号(1-5)')
     parser.add_argument('--mode', type=int, choices=[1,2,3], default=1,
-                       help='执行模式: 1=全流程, 2=仅测试, 3=仅恢复')
+                       help='执行模式: 1=全流�? 2=仅测�? 3=仅恢�?)
     args = parser.parse_args()
     
     if args.case:
@@ -514,35 +514,35 @@ def main():
         # 交互式选择
         print("\n请选择要测试的故障场景:")
         print("-"*80)
-        print("1. Tomcat线程池耗尽导致请求超时 (前端层)")
-        print("2. 静态资源加载失败404/403 (前端层)")
-        print("3. MySQL连接池耗尽 (后端层)")
-        print("4. JVM堆内存溢出 (后端层)")
-        print("5. MySQL慢查询导致CPU飙升 (后端层)")
+        print("1. Tomcat线程池耗尽导致请求超时 (前端�?")
+        print("2. 静态资源加载失�?04/403 (前端�?")
+        print("3. MySQL连接池耗尽 (后端�?")
+        print("4. JVM堆内存溢�?(后端�?")
+        print("5. MySQL慢查询导致CPU飙升 (后端�?")
         print("-"*80)
         
         try:
-            choice = input("\n请输入Case编号(1-5, 输入q退出): ").strip()
+            choice = input("\n请输入Case编号(1-5, 输入q退�?: ").strip()
             
             if choice.lower() == 'q':
-                print("退出测试")
+                print("退出测�?)
                 return
             
             case_id = int(choice)
             
             if case_id not in [1, 2, 3, 4, 5]:
-                print("❌ 无效的Case编号,请输入1-5")
+                print("�?无效的Case编号,请输�?-5")
                 return
             
             # 选择执行模式
             print("\n请选择执行模式:")
             print("-"*80)
-            print("1. 全流程 (Generate → Test → Resume)")
-            print("2. 仅测试 (Test only,跳过Generate)")
-            print("3. 仅恢复 (Resume only,跳过Generate和Test)")
+            print("1. 全流�?(Generate �?Test �?Resume)")
+            print("2. 仅测�?(Test only,跳过Generate)")
+            print("3. 仅恢�?(Resume only,跳过Generate和Test)")
             print("-"*80)
             
-            mode_choice = input("\n请输入模式编号(1-3, 默认1): ").strip()
+            mode_choice = input("\n请输入模式编�?1-3, 默认1): ").strip()
             
             if mode_choice == '':
                 mode = 1
@@ -550,17 +550,17 @@ def main():
                 mode = int(mode_choice)
                 
                 if mode not in [1, 2, 3]:
-                    print("❌ 无效的模式编号,请输入1-3")
+                    print("�?无效的模式编�?请输�?-3")
                     return
         except ValueError:
-            print("❌ 无效输入,请输入数字")
+            print("�?无效输入,请输入数�?)
             return
     
     # 显示执行信息
     mode_names = {
-        1: "全流程 (Generate → Test → Resume)",
-        2: "仅测试 (Test only)",
-        3: "仅恢复 (Resume only)"
+        1: "全流�?(Generate �?Test �?Resume)",
+        2: "仅测�?(Test only)",
+        3: "仅恢�?(Resume only)"
     }
     
     print(f"\n📋 执行计划:")
@@ -571,11 +571,11 @@ def main():
     # 运行测试
     try:
         asyncio.run(test_case(case_id, mode))
-        print("\n✅ 测试完成!\n")
+        print("\n�?测试完成!\n")
     except KeyboardInterrupt:
         print("\n\n⚠️  用户中断测试")
     except Exception as e:
-        print(f"\n❌ 发生错误: {str(e)}")
+        print(f"\n�?发生错误: {str(e)}")
         import traceback
         traceback.print_exc()
 

@@ -1,5 +1,5 @@
 """
-OpsAgent 简单测试脚本
+OpsAgent 简单测试脚�?
 """
 import asyncio
 import sys
@@ -11,18 +11,18 @@ from dotenv import load_dotenv
 load_dotenv()
 
 async def test_search():
-    """测试知识检索"""
+    """测试知识检�?""
     print("\n" + "="*70)
-    print("测试: 知识检索")
+    print("测试: 知识检�?)
     print("="*70)
     
-    from Routing.tool_cache import tool_cache
+    from utils.tool_cache import tool_cache
     
     tools = await tool_cache.get_tools("ops-diagnosis")
     search_tool = next((t for t in tools if t.name == "search_ops_knowledge"), None)
     
     if not search_tool:
-        print("✗ 未找到 search_ops_knowledge 工具")
+        print("�?未找�?search_ops_knowledge 工具")
         return False
     
     result = await search_tool.ainvoke({"query": "502 Bad Gateway error", "top_k": 2})
@@ -34,7 +34,7 @@ async def test_search():
     if isinstance(result, list) and len(result) > 0:
         first_item = result[0]
         if isinstance(first_item, dict) and 'text' in first_item:
-            # 解析 JSON 字符串
+            # 解析 JSON 字符�?
             import json
             result_dict = json.loads(first_item['text'])
         else:
@@ -48,10 +48,10 @@ async def test_search():
     print(f"Found {result_dict.get('count', 0)} results")
     
     if result_dict.get("status") == "success" and result_dict.get("count", 0) > 0:
-        print("✓ 检索成功")
+        print("�?检索成�?)
         return True
     else:
-        print("✗ 检索失败")
+        print("�?检索失�?)
         return False
 
 async def main():
@@ -65,11 +65,11 @@ async def main():
         
         if success:
             print("\n" + "="*70)
-            print("测试通过 ✓")
+            print("测试通过 �?)
             print("="*70)
         else:
             print("\n" + "="*70)
-            print("测试失败 ✗")
+            print("测试失败 �?)
             print("="*70)
             sys.exit(1)
     except Exception as e:

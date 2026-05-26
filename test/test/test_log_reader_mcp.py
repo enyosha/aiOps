@@ -12,23 +12,23 @@ from dotenv import load_dotenv
 load_dotenv()
 
 async def test_log_reader_mcp():
-    """测试Log-Reader MCP服务的各个工具"""
+    """测试Log-Reader MCP服务的各个工�?""
     print("\n" + "="*80)
     print("Log-Reader MCP 服务测试")
     print("="*80)
     
-    from Routing.tool_cache import tool_cache
+    from utils.tool_cache import tool_cache
     
-    # 获取log-reader的工具
-    print("\n【步骤1】加载log-reader工具...")
+    # 获取log-reader的工�?
+    print("\n【步�?】加载log-reader工具...")
     tools = await tool_cache.get_tools("log-reader")
-    print(f"✓ 成功加载 {len(tools)} 个工具")
+    print(f"�?成功加载 {len(tools)} 个工�?)
     for tool in tools:
         print(f"  - {tool.name}: {tool.description[:50]}...")
     
-    # 测试1: 检查容器状态
+    # 测试1: 检查容器状�?
     print("\n" + "="*80)
-    print("【测试1】检查容器状态")
+    print("【测�?】检查容器状�?)
     print("="*80)
     
     status_tool = next((t for t in tools if t.name == "get_container_status"), None)
@@ -46,19 +46,19 @@ async def test_log_reader_mcp():
         else:
             status_data = result
         
-        print(f"状态: {status_data.get('status')}")
+        print(f"状�? {status_data.get('status')}")
         if status_data.get('status') == 'success':
             print(f"容器: {status_data.get('container')}")
-            print(f"运行中: {'是' if status_data.get('running') else '否'}")
+            print(f"运行�? {'�? if status_data.get('running') else '�?}")
             print(f"详情: {status_data.get('status_detail')}")
         else:
             print(f"错误: {status_data.get('message')}")
     else:
-        print("❌ 未找到get_container_status工具")
+        print("�?未找到get_container_status工具")
     
     # 测试2: 快速扫描异常时间点
     print("\n" + "="*80)
-    print("【测试2】快速扫描异常时间点（过去2小时）")
+    print("【测�?】快速扫描异常时间点（过�?小时�?)
     print("="*80)
     
     scan_tool = next((t for t in tools if t.name == "scan_logs_for_anomalies"), None)
@@ -79,26 +79,26 @@ async def test_log_reader_mcp():
         else:
             scan_data = result
         
-        print(f"状态: {scan_data.get('status')}")
+        print(f"状�? {scan_data.get('status')}")
         if scan_data.get('status') == 'success':
-            print(f"异常时间点数量: {scan_data.get('anomaly_count')}")
-            print(f"ERROR/WARN总行数: {scan_data.get('total_error_warn_lines')}")
+            print(f"异常时间点数�? {scan_data.get('anomaly_count')}")
+            print(f"ERROR/WARN总行�? {scan_data.get('total_error_warn_lines')}")
             
             timestamps = scan_data.get('anomaly_timestamps', [])
             if timestamps:
-                print(f"\n前10个异常时间点:")
+                print(f"\n�?0个异常时间点:")
                 for i, ts in enumerate(timestamps[:10], 1):
                     print(f"  {i}. {ts}")
             else:
-                print("\n未检测到异常时间点")
+                print("\n未检测到异常时间�?)
         else:
             print(f"错误: {scan_data.get('message')}")
     else:
-        print("❌ 未找到scan_logs_for_anomalies工具")
+        print("�?未找到scan_logs_for_anomalies工具")
     
-    # 测试3: 读取指定时间范围的日志
+    # 测试3: 读取指定时间范围的日�?
     print("\n" + "="*80)
-    print("【测试3】读取最近30分钟的ERROR/WARN日志")
+    print("【测�?】读取最�?0分钟的ERROR/WARN日志")
     print("="*80)
     
     read_tool = next((t for t in tools if t.name == "read_docker_logs"), None)
@@ -126,7 +126,7 @@ async def test_log_reader_mcp():
         else:
             log_data = result
         
-        print(f"状态: {log_data.get('status')}")
+        print(f"状�? {log_data.get('status')}")
         if log_data.get('status') == 'success':
             print(f"容器: {log_data.get('container')}")
             print(f"时间范围: {log_data.get('time_range')}")
@@ -135,7 +135,7 @@ async def test_log_reader_mcp():
             
             logs = log_data.get('logs', '')
             if logs:
-                print(f"\n日志预览（前500字符）:")
+                print(f"\n日志预览（前500字符�?")
                 print("-"*80)
                 print(logs[:500])
                 print("-"*80)
@@ -144,7 +144,7 @@ async def test_log_reader_mcp():
         else:
             print(f"错误: {log_data.get('message')}")
     else:
-        print("❌ 未找到read_docker_logs工具")
+        print("�?未找到read_docker_logs工具")
     
     print("\n" + "="*80)
     print("测试完成")
@@ -153,9 +153,9 @@ async def test_log_reader_mcp():
 if __name__ == "__main__":
     try:
         asyncio.run(test_log_reader_mcp())
-        print("\n✅ 测试成功")
+        print("\n�?测试成功")
     except Exception as e:
-        print(f"\n❌ 测试失败: {str(e)}")
+        print(f"\n�?测试失败: {str(e)}")
         import traceback
         traceback.print_exc()
         sys.exit(1)

@@ -1,7 +1,7 @@
 """
 检查远程服务器时区设置
-用于诊断前端日志时间显示为UTC时间而非本地时间的问题
-支持通过SSH检查远程服务器或Docker容器的时区配置
+用于诊断前端日志时间显示为UTC时间而非本地时间的问�?
+支持通过SSH检查远程服务器或Docker容器的时区配�?
 """
 import asyncio
 import sys
@@ -17,11 +17,11 @@ load_dotenv()
 async def check_remote_timezone():
     """检查远程服务器时区设置"""
     print("\n" + "="*80)
-    print("远程服务器时区设置检查")
+    print("远程服务器时区设置检�?)
     print("="*80)
     
-    # 获取SSH隧道管理器
-    from Routing.ssh_tunnel_manager import ssh_tunnel_manager
+    # 获取SSH隧道管理�?
+    from utils.ssh_tunnel_manager import ssh_tunnel_manager
     
     # 从环境变量获取SSH配置
     ssh_host = os.getenv('SSH_HOST', 'localhost')
@@ -29,7 +29,7 @@ async def check_remote_timezone():
     ssh_user = os.getenv('SSH_USER', 'root')
     ssh_password = os.getenv('SSH_PASSWORD', '')
     
-    print(f"\n【SSH连接信息】")
+    print(f"\n【SSH连接信息�?)
     print(f"主机: {ssh_host}")
     print(f"端口: {ssh_port}")
     print(f"用户: {ssh_user}")
@@ -44,12 +44,12 @@ async def check_remote_timezone():
         )
         
         if not tunnel:
-            print("❌ 无法建立SSH连接")
+            print("�?无法建立SSH连接")
             return
         
-        print("✅ SSH连接成功")
+        print("�?SSH连接成功")
         
-        # 执行时区检查命令
+        # 执行时区检查命�?
         commands = [
             ("date", "当前系统时间"),
             ("timedatectl", "系统时区配置 (systemd)"),
@@ -58,25 +58,25 @@ async def check_remote_timezone():
             ("ls -la /etc/localtime", "本地时间链接"),
         ]
         
-        print(f"\n【远程服务器时区信息】")
+        print(f"\n【远程服务器时区信息�?)
         for cmd, description in commands:
             try:
                 result = await ssh_tunnel_manager.execute_command(tunnel, cmd)
                 print(f"\n{description}:")
                 print(f"命令: {cmd}")
-                print(f"输出: {result.strip() if result else '无输出'}")
+                print(f"输出: {result.strip() if result else '无输�?}")
             except Exception as e:
                 print(f"\n{description}:")
                 print(f"命令: {cmd}")
                 print(f"错误: {str(e)}")
         
         # 检查Docker容器时区
-        print(f"\n【Docker容器时区检查】")
+        print(f"\n【Docker容器时区检查�?)
         container_names = ['ruoyi-app', 'ruoyi-nginx', 'ruoyi-mysql', 'ruoyi-redis']
         
         for container in container_names:
             try:
-                # 检查容器是否存在
+                # 检查容器是否存�?
                 status_cmd = f"docker inspect --format='{{{{.State.Running}}}}' {container}"
                 status_result = await ssh_tunnel_manager.execute_command(tunnel, status_cmd)
                 
@@ -88,21 +88,21 @@ async def check_remote_timezone():
                     time_result = await ssh_tunnel_manager.execute_command(tunnel, time_cmd)
                     print(f"  容器时间: {time_result.strip()}")
                     
-                    # 检查容器时区
-                    tz_cmd = f"docker exec {container} cat /etc/timezone 2>/dev/null || echo '未设置'"
+                    # 检查容器时�?
+                    tz_cmd = f"docker exec {container} cat /etc/timezone 2>/dev/null || echo '未设�?"
                     tz_result = await ssh_tunnel_manager.execute_command(tunnel, tz_cmd)
                     print(f"  容器时区: {tz_result.strip()}")
                 else:
-                    print(f"\n容器 {container}: 未运行")
+                    print(f"\n容器 {container}: 未运�?)
             except Exception as e:
-                print(f"\n容器 {container}: 检查失败 - {str(e)}")
+                print(f"\n容器 {container}: 检查失�?- {str(e)}")
         
         # 关闭SSH连接
         await ssh_tunnel_manager.close_tunnel(tunnel)
-        print("\n✅ SSH连接已关闭")
+        print("\n�?SSH连接已关�?)
         
     except Exception as e:
-        print(f"\n❌ 错误: {str(e)}")
+        print(f"\n�?错误: {str(e)}")
         import traceback
         traceback.print_exc()
 
@@ -110,7 +110,7 @@ async def check_remote_timezone():
 async def check_local_docker_timezone():
     """检查本地Docker容器时区"""
     print("\n" + "="*80)
-    print("本地Docker容器时区检查")
+    print("本地Docker容器时区检�?)
     print("="*80)
     
     import subprocess
@@ -119,14 +119,14 @@ async def check_local_docker_timezone():
     
     for container in container_names:
         try:
-            # 检查容器是否运行
+            # 检查容器是否运�?
             result = subprocess.run(
                 ['docker', 'inspect', '--format={{.State.Running}}', container],
                 capture_output=True, text=True, timeout=10
             )
             
             if result.stdout.strip() == 'true':
-                print(f"\n【容器: {container}】")
+                print(f"\n【容�? {container}�?)
                 
                 # 获取容器时间
                 time_result = subprocess.run(
@@ -143,24 +143,24 @@ async def check_local_docker_timezone():
                 if tz_result.returncode == 0:
                     print(f"容器时区: {tz_result.stdout.strip()}")
                 else:
-                    print("容器时区: 未设置")
+                    print("容器时区: 未设�?)
             else:
-                print(f"\n【容器: {container}】: 未运行")
+                print(f"\n【容�? {container}�? 未运�?)
         except subprocess.TimeoutExpired:
-            print(f"\n【容器: {container}】: 命令超时")
+            print(f"\n【容�? {container}�? 命令超时")
         except FileNotFoundError:
-            print("\n❌ Docker未安装或不在PATH中")
+            print("\n�?Docker未安装或不在PATH�?)
             break
         except Exception as e:
-            print(f"\n【容器: {container}】: 检查失败 - {str(e)}")
+            print(f"\n【容�? {container}�? 检查失�?- {str(e)}")
 
 
 if __name__ == "__main__":
     try:
-        print("选择检查模式:")
+        print("选择检查模�?")
         print("1. 检查远程服务器 (通过SSH)")
         print("2. 检查本地Docker容器")
-        print("3. 两者都检查")
+        print("3. 两者都检�?)
         
         choice = input("\n请输入选择 (1/2/3, 默认2): ").strip() or "2"
         
@@ -177,6 +177,6 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         print("\n\n用户中断")
     except Exception as e:
-        print(f"\n❌ 错误: {str(e)}")
+        print(f"\n�?错误: {str(e)}")
         import traceback
         traceback.print_exc()

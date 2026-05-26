@@ -1,5 +1,5 @@
 """
-完整诊断流程测试 - 验证健康检查功能集成
+完整诊断流程测试 - 验证健康检查功能集�?
 模拟真实告警事件，触发完整的诊断流程
 """
 import asyncio
@@ -14,29 +14,29 @@ load_dotenv()
 
 
 async def test_full_diagnosis_with_health_check():
-    """测试完整诊断流程，包含健康检查"""
+    """测试完整诊断流程，包含健康检�?""
     from Routing.diagnosis_agent import diagnosis_workflow
     
     print("="*80)
-    print("完整诊断流程测试 - 健康检查功能验证")
+    print("完整诊断流程测试 - 健康检查功能验�?)
     print("="*80)
     
-    # 构造测试告警事件
+    # 构造测试告警事�?
     alert_event = {
         "alert_name": "服务访问超时",
         "alert_type": "timeout",
-        "description": "前端服务响应缓慢，部分请求超时",
+        "description": "前端服务响应缓慢，部分请求超�?,
         "timestamp": "2026-05-19T12:40:00Z"
     }
     
-    # 构造初始状态
+    # 构造初始状�?
     initial_state = {
         "alert_event": alert_event,
         "container_name": "ruoyi-app",
         "messages": [],
         "current_step": "start",
         "iteration_count": 0,
-        "max_iterations": 15,  # 增加迭代次数以允许执行健康检查
+        "max_iterations": 15,  # 增加迭代次数以允许执行健康检�?
         "actions_taken": [],
         "anomaly_timestamps": [],
         "logs_data": None,
@@ -119,18 +119,18 @@ async def test_full_diagnosis_with_health_check():
         "health_check_summary": None
     }
     
-    print("\n🔄 开始执行诊断流程...")
+    print("\n🔄 开始执行诊断流�?..")
     print("="*80)
     
     try:
-        # 执行诊断工作流
+        # 执行诊断工作�?
         result = await diagnosis_workflow.ainvoke(initial_state)
         
         print("\n" + "="*80)
-        print("✅ 诊断完成!")
+        print("�?诊断完成!")
         print("="*80)
         
-        # 检查诊断结果
+        # 检查诊断结�?
         diagnosis_result = result.get('diagnosis_result', {})
         content = diagnosis_result.get('content', '')
         
@@ -140,42 +140,42 @@ async def test_full_diagnosis_with_health_check():
             print(content)
             print("-"*80)
             
-            # 验证健康检查是否执行
-            print("\n🔍 健康检查功能验证:")
+            # 验证健康检查是否执�?
+            print("\n🔍 健康检查功能验�?")
             checks = {
-                "包含健康检查摘要": "【健康检查摘要】" in content or "健康检查" in content,
-                "包含性能指标详情": "【性能指标详情】" in content or "CPU=" in content,
-                "明确区分历史/当前问题": "已恢复的历史问题" in content or "当前活跃" in content or "系统未发现当前错误" in content,
+                "包含健康检查摘�?: "【健康检查摘要�? in content or "健康检�? in content,
+                "包含性能指标详情": "【性能指标详情�? in content or "CPU=" in content,
+                "明确区分历史/当前问题": "已恢复的历史问题" in content or "当前活跃" in content or "系统未发现当前错�? in content,
                 "引用具体日志证据": any(keyword in content for keyword in ["upstream timed out", "504", "SocketTimeoutException"]),
             }
             
             all_passed = True
             for check_name, passed in checks.items():
-                status = "✅" if passed else "❌"
+                status = "�? if passed else "�?
                 print(f"  {status} {check_name}: {'通过' if passed else '未通过'}")
                 if not passed:
                     all_passed = False
             
-            # 检查state中是否有健康检查数据
-            print("\n📋 State中的健康检查数据:")
-            print(f"  health_check_results: {'✅ 存在' if result.get('health_check_results') else '❌ 不存在'}")
-            print(f"  port_check_results: {'✅ 存在' if result.get('port_check_results') else '❌ 不存在'}")
-            print(f"  performance_metrics: {'✅ 存在' if result.get('performance_metrics') else '❌ 不存在'}")
-            print(f"  health_check_summary: {'✅ 存在' if result.get('health_check_summary') else '❌ 不存在'}")
+            # 检查state中是否有健康检查数�?
+            print("\n📋 State中的健康检查数�?")
+            print(f"  health_check_results: {'�?存在' if result.get('health_check_results') else '�?不存�?}")
+            print(f"  port_check_results: {'�?存在' if result.get('port_check_results') else '�?不存�?}")
+            print(f"  performance_metrics: {'�?存在' if result.get('performance_metrics') else '�?不存�?}")
+            print(f"  health_check_summary: {'�?存在' if result.get('health_check_summary') else '�?不存�?}")
             
             if result.get('health_check_summary'):
-                print(f"\n  健康检查摘要内容:\n{result['health_check_summary']}")
+                print(f"\n  健康检查摘要内�?\n{result['health_check_summary']}")
             
             if all_passed:
                 print("\n🎉 所有质量检查通过! 健康检查功能已成功集成!")
             else:
-                print("\n⚠️  部分检查未通过，可能需要进一步调试")
+                print("\n⚠️  部分检查未通过，可能需要进一步调�?)
         else:
-            print("\n❌ 诊断结果为空!")
+            print("\n�?诊断结果为空!")
             print(f"完整结果keys: {list(result.keys())}")
     
     except Exception as e:
-        print(f"\n❌ 诊断过程出错: {e}")
+        print(f"\n�?诊断过程出错: {e}")
         import traceback
         traceback.print_exc()
 

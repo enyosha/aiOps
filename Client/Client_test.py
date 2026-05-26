@@ -33,7 +33,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 # 导入新的聊天 API
 from Routing.route import chat_with_session, clear_session, get_session_info, cleanup_all
-from Routing.conversation_manager import conversation_manager
+from utils.conversation_manager import conversation_manager
 
 
 def signal_handler(sig, frame):
@@ -162,7 +162,7 @@ async def main():
                 continue
             
             if cmd == 'stats':
-                from Routing.tool_cache import tool_cache
+                from utils.tool_cache import tool_cache
                 cache_stats = tool_cache.get_cache_stats()
                 print(f"\n📦 工具缓存统计:")
                 print(f"   缓存服务器: {cache_stats['cached_servers']}")

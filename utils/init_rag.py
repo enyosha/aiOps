@@ -28,7 +28,7 @@ from pymilvus import (
     utility,
 )
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-from Routing.milvus_tunnel_manager import MilvusTunnelManager
+from utils.milvus_tunnel_manager import MilvusTunnelManager
 
 # 加载环境变量
 load_dotenv()

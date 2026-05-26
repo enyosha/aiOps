@@ -16,9 +16,9 @@ API_BASE_URL = "http://localhost:8004"  # 使用8004端口
 
 
 def test_health_check():
-    """测试健康检查"""
+    """测试健康检�?""
     print("\n" + "="*80)
-    print("【测试1】健康检查")
+    print("【测�?】健康检�?)
     print("="*80)
     
     try:
@@ -27,23 +27,23 @@ def test_health_check():
         print(f"响应: {response.json()}")
         return response.status_code == 200
     except Exception as e:
-        print(f"❌ 错误: {str(e)}")
+        print(f"�?错误: {str(e)}")
         return False
 
 
 def test_trigger_diagnosis():
     """测试触发诊断"""
     print("\n" + "="*80)
-    print("【测试2】触发诊断任务")
+    print("【测�?】触发诊断任�?)
     print("="*80)
     
-    # 构造告警事件
+    # 构造告警事�?
     alert_event = {
         "alert_name": "ContainerRestartDetected",
         "container_name": "ruoyi-app",
         "alert_time": "2026-05-08T14:30:00",
         "alert_type": "container_restart",
-        "description": "检测到容器在过去5分钟内发生重启"
+        "description": "检测到容器在过�?分钟内发生重�?
     }
     
     payload = {
@@ -61,36 +61,36 @@ def test_trigger_diagnosis():
         print(f"状态码: {response.status_code}")
         result = response.json()
         print(f"任务ID: {result['task_id']}")
-        print(f"状态: {result['status']}")
+        print(f"状�? {result['status']}")
         print(f"消息: {result['message']}")
         
         return result['task_id']
         
     except Exception as e:
-        print(f"❌ 错误: {str(e)}")
+        print(f"�?错误: {str(e)}")
         return None
 
 
 def test_query_result(task_id: str):
     """查询诊断结果"""
     print("\n" + "="*80)
-    print("【测试3】查询诊断结果")
+    print("【测�?】查询诊断结�?)
     print("="*80)
     
-    max_retries = 30  # 增加到30次，总共150秒
-    retry_interval = 5  # 每次间隔5秒
+    max_retries = 30  # 增加�?0次，总共150�?
+    retry_interval = 5  # 每次间隔5�?
     
     for i in range(max_retries):
         try:
             response = requests.get(f"{API_BASE_URL}/api/diagnose/{task_id}")
             result = response.json()
             
-            print(f"\n第{i+1}次查询:")
-            print(f"  状态: {result['status']}")
+            print(f"\n第{i+1}次查�?")
+            print(f"  状�? {result['status']}")
             
             if result['status'] == 'completed':
                 print(f"\n{'='*80}")
-                print("[OK] 诊断完成！")
+                print("[OK] 诊断完成�?)
                 
                 diagnosis = result.get('result', {})
                 if diagnosis.get('status') == 'success':
@@ -99,7 +99,7 @@ def test_query_result(task_id: str):
                     diag_result = diagnosis.get('diagnosis', {})
                     content = diag_result.get('content', '')
                     
-                    # 提取markdown代码块内容
+                    # 提取markdown代码块内�?
                     import re
                     markdown_match = re.search(r'```markdown\s*\n(.*?)\n```', content, re.DOTALL)
                     if markdown_match:
@@ -129,7 +129,7 @@ def test_query_result(task_id: str):
                 return False
                 
             else:
-                print(f"  等待中... ({i+1}/{max_retries})")
+                print(f"  等待�?.. ({i+1}/{max_retries})")
                 time.sleep(retry_interval)
                 
         except Exception as e:
@@ -143,7 +143,7 @@ def test_query_result(task_id: str):
 def test_list_tasks():
     """列出诊断任务"""
     print("\n" + "="*80)
-    print("【测试4】列出诊断任务")
+    print("【测�?】列出诊断任�?)
     print("="*80)
     
     try:
@@ -155,21 +155,21 @@ def test_list_tasks():
         
         tasks = result.get('tasks', [])
         for task in tasks:
-            print(f"  - {task['task_id'][:8]}... | 状态: {task['status']} | 创建时间: {task['created_at']}")
+            print(f"  - {task['task_id'][:8]}... | 状�? {task['status']} | 创建时间: {task['created_at']}")
         
         return True
         
     except Exception as e:
-        print(f"❌ 错误: {str(e)}")
+        print(f"�?错误: {str(e)}")
         import traceback
         traceback.print_exc()
         return False
 
 
 def _stop_api_server(process):
-    """停止API服务器"""
+    """停止API服务�?""
     try:
-        # 发送 Ctrl+C 信号（Windows）
+        # 发�?Ctrl+C 信号（Windows�?
         if os.name == 'nt':
             import signal
             process.send_signal(signal.CTRL_C_EVENT)
@@ -186,10 +186,10 @@ def _stop_api_server(process):
 
 
 def _kill_process_on_port(port: int):
-    """强制终止占用指定端口的进程"""
+    """强制终止占用指定端口的进�?""
     try:
         if os.name == 'nt':
-            # Windows: 使用 netstat 查找占用端口的 PID
+            # Windows: 使用 netstat 查找占用端口�?PID
             result = subprocess.run(
                 ['netstat', '-ano'],
                 capture_output=True,
@@ -202,10 +202,10 @@ def _kill_process_on_port(port: int):
                         pid = parts[-1]
                         try:
                             pid = int(pid)
-                            print(f"[清理] 发现占用端口 {port} 的进程 (PID: {pid})，正在终止...")
+                            print(f"[清理] 发现占用端口 {port} 的进�?(PID: {pid})，正在终�?..")
                             subprocess.run(['taskkill', '/F', '/PID', str(pid)], 
                                          capture_output=True, check=True)
-                            print(f"[清理] 已终止进程 {pid}")
+                            print(f"[清理] 已终止进�?{pid}")
                             return True
                         except (ValueError, subprocess.CalledProcessError):
                             continue
@@ -227,12 +227,12 @@ def _kill_process_on_port(port: int):
                 return True
         return False
     except Exception as e:
-        print(f"[清理] 清理端口 {port} 时出错: {e}")
+        print(f"[清理] 清理端口 {port} 时出�? {e}")
         return False
 
 
 def main():
-    """运行所有测试"""
+    """运行所有测�?""
     import subprocess
     import signal
     import threading
@@ -244,21 +244,21 @@ def main():
     
     # 检查并清理端口
     port = 8004
-    print(f"\n检查端口 {port}...")
+    print(f"\n检查端�?{port}...")
     if _kill_process_on_port(port):
-        print(f"[OK] 端口 {port} 已清理")
+        print(f"[OK] 端口 {port} 已清�?)
         time.sleep(1)  # 等待端口释放
     else:
         print(f"[OK] 端口 {port} 可用")
     
     # 自动启动API服务器（在新窗口中）
-    print("\n正在启动API服务器...")
+    print("\n正在启动API服务�?..")
     
-    # 获取api_server.py的绝对路径
+    # 获取api_server.py的绝对路�?
     api_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'Server', 'api_server.py')
     api_script = os.path.normpath(api_script)
     
-    # 创建带时间戳的日志文件
+    # 创建带时间戳的日志文�?
     timestamp = datetime.now().strftime('%Y%m%d%H%M%S')
     log_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'logs', f'api_server_test_{timestamp}.log')
     os.makedirs(os.path.dirname(log_file), exist_ok=True)
@@ -267,7 +267,7 @@ def main():
     # 使用utf-8-sig编码确保中文正确显示
     with open(log_file, 'w', encoding='utf-8-sig') as log:
         if os.name == 'nt':
-            # Windows: 使用start命令打开新窗口
+            # Windows: 使用start命令打开新窗�?
             startupinfo = subprocess.STARTUPINFO()
             startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
             api_process = subprocess.Popen(
@@ -279,7 +279,7 @@ def main():
                 env={**os.environ, 'PYTHONIOENCODING': 'utf-8'}  # 设置Python输出编码
             )
         else:
-            # Linux/Mac: 使用nohup或其他方式
+            # Linux/Mac: 使用nohup或其他方�?
             api_process = subprocess.Popen(
                 ['python', api_script],
                 stdout=log,
@@ -287,7 +287,7 @@ def main():
                 env={**os.environ, 'PYTHONIOENCODING': 'utf-8'}
             )
     
-    # 等待几秒让服务启动
+    # 等待几秒让服务启�?
     time.sleep(3)
     print(f"\nAPI服务器已启动 (PID: {api_process.pid})")
     print(f"日志文件: {log_file}")
@@ -296,14 +296,14 @@ def main():
     print("="*80)
     
     try:
-        # 等待服务启动（带重试）
+        # 等待服务启动（带重试�?
         print("\n等待API服务就绪...")
-        max_wait = 10  # 最多等待10秒
+        max_wait = 10  # 最多等�?0�?
         for i in range(max_wait):
             try:
                 response = requests.get(f"{API_BASE_URL}/api/health", timeout=2)
                 if response.status_code == 200:
-                    print(f"API服务已就绪 (耗时{i+1}秒)")
+                    print(f"API服务已就�?(耗时{i+1}�?")
                     break
             except:
                 pass
@@ -315,9 +315,9 @@ def main():
         
         print("\n" + "="*80)
         
-        # 测试1: 健康检查
+        # 测试1: 健康检�?
         if not test_health_check():
-            print("\n[ERROR] API服务未启动")
+            print("\n[ERROR] API服务未启�?)
             _stop_api_server(api_process)
             return False
         
@@ -338,14 +338,14 @@ def main():
         test_list_tasks()
         
         print("\n" + "="*80)
-        print("[OK] 所有测试通过！")
+        print("[OK] 所有测试通过�?)
         print("="*80)
         
         return True
         
     finally:
-        # 测试结束后停止API服务器
-        print("\n正在停止API服务器...")
+        # 测试结束后停止API服务�?
+        print("\n正在停止API服务�?..")
         _stop_api_server(api_process)
 
 
@@ -357,7 +357,7 @@ if __name__ == "__main__":
         success = main()
         sys.exit(0 if success else 1)
     except KeyboardInterrupt:
-        print("\n\n[WARNING] 测试被中断")
+        print("\n\n[WARNING] 测试被中�?)
         sys.exit(1)
     except Exception as e:
         print(f"\n[ERROR] 测试异常: {str(e)}")

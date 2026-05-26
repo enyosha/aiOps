@@ -29,15 +29,15 @@ async def setup_frontend_timezone():
     print("设置前端服务器容器时区为 UTC+8")
     print("="*80)
     
-    # 从环境变量获取配置
+    # 从环境变量获取配�?
     ssh_host = os.getenv('FRONTEND_SSH_HOST', '8.146.236.55')
     ssh_port = int(os.getenv('FRONTEND_SSH_PORT', '22'))
     ssh_user = os.getenv('FRONTEND_SSH_USER', 'root')
     ssh_key_path = os.getenv('FRONTEND_SSH_KEY_PATH', '')
     container_name = os.getenv('FRONTEND_CONTAINER_NAME', 'ruoyi-frontend')
     
-    print(f"\n【连接信息】")
-    print(f"服务器: {ssh_host}:{ssh_port}")
+    print(f"\n【连接信息�?)
+    print(f"服务�? {ssh_host}:{ssh_port}")
     print(f"用户: {ssh_user}")
     print(f"容器: {container_name}")
     
@@ -62,10 +62,10 @@ async def setup_frontend_timezone():
             print("   ⚠️ 未找到密钥文件，尝试密码认证（需要在代码中配置）")
             return
         
-        print("   ✅ SSH连接成功")
+        print("   �?SSH连接成功")
         
-        # 步骤1: 检查容器当前时区
-        print(f"\n2️⃣  检查容器 {container_name} 当前时区...")
+        # 步骤1: 检查容器当前时�?
+        print(f"\n2️⃣  检查容�?{container_name} 当前时区...")
         cmd = f"docker exec {container_name} date"
         output, error = execute_ssh_command(ssh_client, cmd)
         if output:
@@ -73,8 +73,8 @@ async def setup_frontend_timezone():
         else:
             print(f"   ⚠️ 无法获取时间: {error}")
         
-        # 检查时区文件
-        cmd = f"docker exec {container_name} cat /etc/timezone 2>/dev/null || echo '未设置'"
+        # 检查时区文�?
+        cmd = f"docker exec {container_name} cat /etc/timezone 2>/dev/null || echo '未设�?"
         output, error = execute_ssh_command(ssh_client, cmd)
         print(f"   时区配置: {output}")
         
@@ -85,16 +85,16 @@ async def setup_frontend_timezone():
         if error:
             print(f"   ⚠️ 停止警告: {error}")
         else:
-            print("   ✅ 容器已停止")
+            print("   �?容器已停�?)
         
-        # 步骤3: 删除旧容器
-        print(f"\n4️⃣  删除旧容器 {container_name}...")
+        # 步骤3: 删除旧容�?
+        print(f"\n4️⃣  删除旧容�?{container_name}...")
         cmd = f"docker rm {container_name}"
         output, error = execute_ssh_command(ssh_client, cmd)
         if error:
             print(f"   ⚠️ 删除警告: {error}")
         else:
-            print("   ✅ 容器已删除")
+            print("   �?容器已删�?)
         
         # 步骤4: 查找原始启动命令或docker-compose配置
         print(f"\n5️⃣  查找容器原始配置...")
@@ -113,26 +113,26 @@ async def setup_frontend_timezone():
             cmd = f"cat {first_compose}"
             compose_content, _ = execute_ssh_command(ssh_client, cmd)
             
-            # 检查是否包含前端容器配置
+            # 检查是否包含前端容器配�?
             if container_name.replace('ruoyi-', '') in compose_content or 'frontend' in compose_content.lower():
-                print(f"\n   ✅ 找到包含前端配置的docker-compose文件")
+                print(f"\n   �?找到包含前端配置的docker-compose文件")
                 print(f"   文件路径: {first_compose}")
                 
-                # 步骤5: 修改docker-compose文件，添加时区配置
+                # 步骤5: 修改docker-compose文件，添加时区配�?
                 print(f"\n6️⃣  备份并修改docker-compose文件...")
                 backup_cmd = f"cp {first_compose} {first_compose}.bak.$(date +%Y%m%d%H%M%S)"
                 execute_ssh_command(ssh_client, backup_cmd)
-                print("   ✅ 配置文件已备份")
+                print("   �?配置文件已备�?)
                 
                 # 检查是否已有TZ环境变量
                 if 'TZ=' in compose_content or 'timezone' in compose_content.lower():
-                    print("   ⚠️ 配置文件中已有时区设置，需要手动检查")
+                    print("   ⚠️ 配置文件中已有时区设置，需要手动检�?)
                 else:
                     # 在environment部分添加TZ=Asia/Shanghai
                     print("   正在添加时区配置 TZ=Asia/Shanghai...")
                     
                     # 使用sed在environment部分添加TZ配置
-                    # 这里需要根据实际的docker-compose格式来调整
+                    # 这里需要根据实际的docker-compose格式来调�?
                     modify_cmd = f"""
                     sed -i '/environment:/a\\      - TZ=Asia/Shanghai' {first_compose}
                     """
@@ -140,7 +140,7 @@ async def setup_frontend_timezone():
                     if error:
                         print(f"   ⚠️ 修改警告: {error}")
                     else:
-                        print("   ✅ 时区配置已添加到docker-compose文件")
+                        print("   �?时区配置已添加到docker-compose文件")
                 
                 # 步骤6: 使用docker-compose重启容器
                 print(f"\n7️⃣  使用docker-compose重启容器...")
@@ -151,22 +151,22 @@ async def setup_frontend_timezone():
                 if error:
                     print(f"   ⚠️ 重启警告: {error}")
                 else:
-                    print("   ✅ 容器已通过docker-compose重启")
+                    print("   �?容器已通过docker-compose重启")
             else:
-                print(f"   ⚠️ docker-compose文件中未找到{container_name}的配置")
-                print(f"   可能需要手动重建容器")
+                print(f"   ⚠️ docker-compose文件中未找到{container_name}的配�?)
+                print(f"   可能需要手动重建容�?)
                 await rebuild_container_manually(ssh_client, container_name)
         else:
             print(f"   ⚠️ 未找到docker-compose文件")
-            print(f"   将尝试手动重建容器")
+            print(f"   将尝试手动重建容�?)
             await rebuild_container_manually(ssh_client, container_name)
         
         # 步骤8: 等待容器启动
-        print(f"\n8️⃣  等待容器启动(约30秒)...")
+        print(f"\n8️⃣  等待容器启动(�?0�?...")
         for i in range(30, 0, -5):
-            print(f"   ⏳ 剩余 {i} 秒...", end='\r')
+            print(f"   �?剩余 {i} �?..", end='\r')
             await asyncio.sleep(5)
-        print("   ✅ 容器启动完成")
+        print("   �?容器启动完成")
         
         # 步骤9: 验证时区设置
         print(f"\n9️⃣  验证时区设置...")
@@ -175,55 +175,55 @@ async def setup_frontend_timezone():
         if output:
             print(f"   容器时间: {output}")
             
-            # 检查是否包含+0800或CST
+            # 检查是否包�?0800或CST
             if '+0800' in output or 'CST' in output:
-                print("   ✅ 时区设置成功 (UTC+8)")
+                print("   �?时区设置成功 (UTC+8)")
             else:
-                print("   ⚠️ 时区可能未正确设置，请检查输出")
+                print("   ⚠️ 时区可能未正确设置，请检查输�?)
         
-        # 检查时区文件
-        cmd = f"docker exec {container_name} cat /etc/timezone 2>/dev/null || echo '未设置'"
+        # 检查时区文�?
+        cmd = f"docker exec {container_name} cat /etc/timezone 2>/dev/null || echo '未设�?"
         output, error = execute_ssh_command(ssh_client, cmd)
         print(f"   时区配置: {output}")
         
-        # 步骤10: 查看最新日志验证时间格式
-        print(f"\n🔟 查看最新日志验证时间格式...")
+        # 步骤10: 查看最新日志验证时间格�?
+        print(f"\n🔟 查看最新日志验证时间格�?..")
         cmd = f"docker logs {container_name} --tail 5"
         output, error = execute_ssh_command(ssh_client, cmd)
         if output:
-            print("   最新日志:")
+            print("   最新日�?")
             for line in output.splitlines()[:5]:
                 print(f"     {line}")
         
         print("\n" + "="*80)
-        print("✅ 前端容器时区设置完成!")
+        print("�?前端容器时区设置完成!")
         print("="*80)
         print("\n💡 验证建议:")
         print(f"   1. 运行: docker logs {container_name} --tail 20")
-        print("   2. 确认日志时间显示为北京时间 (UTC+8)")
-        print("   3. 在前端页面执行操作，观察日志时间是否与当前时间一致")
+        print("   2. 确认日志时间显示为北京时�?(UTC+8)")
+        print("   3. 在前端页面执行操作，观察日志时间是否与当前时间一�?)
         print()
         
     except Exception as e:
-        print(f"\n❌ 错误: {str(e)}")
+        print(f"\n�?错误: {str(e)}")
         import traceback
         traceback.print_exc()
     finally:
         if ssh_client:
             ssh_client.close()
-            print("\n✅ SSH连接已关闭")
+            print("\n�?SSH连接已关�?)
 
 
 async def rebuild_container_manually(ssh_client, container_name):
     """手动重建容器（当没有docker-compose文件时）"""
     print(f"\n   📝 手动重建容器 {container_name}...")
     
-    # 获取容器的原始配置
+    # 获取容器的原始配�?
     print("   1. 获取容器原始配置...")
-    cmd = f"docker inspect {container_name} 2>/dev/null || echo '容器不存在'"
+    cmd = f"docker inspect {container_name} 2>/dev/null || echo '容器不存�?"
     output, _ = execute_ssh_command(ssh_client, cmd)
     
-    if '容器不存在' in output:
+    if '容器不存�? in output:
         print("   ⚠️ 容器不存在，需要先了解原始启动参数")
         print("   💡 建议:")
         print("      - 查看docker历史记录: docker history <镜像ID>")
@@ -231,8 +231,8 @@ async def rebuild_container_manually(ssh_client, container_name):
         return
     
     # 由于docker inspect输出很复杂，这里提供通用方案
-    print("\n   2. 使用通用方式重建容器（带时区配置）...")
-    print("   ⚠️ 注意: 这可能需要根据实际环境调整参数")
+    print("\n   2. 使用通用方式重建容器（带时区配置�?..")
+    print("   ⚠️ 注意: 这可能需要根据实际环境调整参�?)
     
     # 提供一个示例的重建命令（需要根据实际情况修改）
     example_cmd = f"""
@@ -257,6 +257,6 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         print("\n\n用户中断")
     except Exception as e:
-        print(f"\n❌ 错误: {str(e)}")
+        print(f"\n�?错误: {str(e)}")
         import traceback
         traceback.print_exc()
